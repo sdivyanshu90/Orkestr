@@ -86,54 +86,43 @@ git init -b main
 cat > calc.py <<'PY'
 def add(a, b):
     return a + b
+
+
+def subtract(a, b):
+    return a - b
+PY
+mkdir -p tests
+cat > conftest.py <<'PY'
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+PY
+cat > tests/test_calc.py <<'PY'
+from calc import add, subtract
+
+
+def test_add():
+    assert add(2, 3) == 5
+
+
+def test_subtract():
+    assert subtract(5, 2) == 3
 PY
 git add -A && git commit -m "initial"
 
-# 2. Describe the work
-cat > request.json <<'JSON'
-{
-  "objective": "Add a round_half_up helper and test it",
-  "tasks": [
-    {
-      "id": "impl",
-      "title": "Implement round_half_up",
-      "objective": "Add a round_half_up(value, digits=0) helper to calc.py",
-      "role": "implementer",
-      "depends_on": [],
-      "anticipated_files": ["calc.py"],
-      "edits": [{"path": "calc.py", "content": "def round_half_up(v, d=0):\n    ...\n"}],
-      "acceptance_criteria": [
-        {"id": "impl-file", "description": "calc.py exists",
-         "kind": "file_exists", "spec": {"path": "calc.py"}},
-        {"id": "impl-symbol", "description": "round_half_up is defined",
-         "kind": "file_contains",
-         "spec": {"path": "calc.py", "pattern": "def round_half_up"}}
-      ]
-    },
-    {
-      "id": "tests",
-      "title": "Test round_half_up",
-      "objective": "Cover round_half_up with unit tests",
-      "role": "test_engineer",
-      "depends_on": ["impl"],
-      "edits": [{"path": "tests/test_rounding.py", "content": "..."}],
-      "acceptance_criteria": [
-        {"id": "tests-pass", "description": "the rounding tests pass",
-         "kind": "pytest_selector", "spec": {"selector": "tests/test_rounding.py"}}
-      ]
-    }
-  ]
-}
-JSON
+# 2. Plan the work (no side effects)
+agent-squad plan "Add a rounding helper and test it" \
+    --repo . --spec ../agent-squad/examples/request-rounding.json
 
-# 3. Plan it (no side effects)
-agent-squad plan "Add a round_half_up helper and test it" \
-    --repo . --spec request.json
-
-# 4. Run it
-agent-squad run "Add a round_half_up helper and test it" \
-    --repo . --spec request.json --json | jq '.summary'
+# 3. Run it
+agent-squad run "Add a rounding helper and test it" \
+    --repo . --spec ../agent-squad/examples/request-rounding.json --json | jq '.summary'
 ```
+
+Two ready-made requests ship with the project:
+`examples/request-rounding.json` (two tasks, the second depending on the
+first) and `examples/request-parallel.json` (two independent tasks). The
+[examples README](examples/README.md) documents the request format.
 
 The run writes everything under `.agent-squad/runs/<run-id>/`:
 
