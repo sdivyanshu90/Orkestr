@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.config import ProviderConfig, RunConfig
 from agent_squad.orchestrator import Orchestrator
 from agent_squad.providers.base import ModelResponse
 from agent_squad.providers.registry import ProviderRouter
-
-from helpers import two_independent_spec
 
 
 class SlowProvider:

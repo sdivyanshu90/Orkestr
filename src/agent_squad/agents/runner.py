@@ -185,7 +185,7 @@ class WorkerRunner:
             bus=self.bus,
             run_id=task.run_id,
             task_id=task.id,
-            actor=task.role.value,
+            actor=worker_identity,
             max_iterations=self._max_iterations(task.role),
             max_turn_tokens=self._turn_tokens(task.role),
             max_task_tokens=task.budget.max_tokens,

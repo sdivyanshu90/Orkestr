@@ -444,6 +444,16 @@ class Scheduler:
                     self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
                     continue
                 self._dispose_worktree(task, result, None)
+                await self._escalate(
+                    task,
+                    attempt,
+                    reason=result.error or "the attempt failed",
+                    severity="medium",
+                    details=(
+                        f"task {task.id!r} failed after {attempts} attempt(s): "
+                        f"{result.error}"
+                    ),
+                )
                 return TaskOutcome(
                     task_id=task.id,
                     status=TaskStatus.FAILED,
@@ -628,6 +638,31 @@ class Scheduler:
         with contextlib.suppress(Exception):
             self.state.transition_task(task_id, TaskStatus.CANCELLED)
         cancelled.add(task_id)
+
+    async def _escalate(
+        self,
+        task: TaskSpec,
+        attempt: int,
+        *,
+        reason: str,
+        severity: str = "medium",
+        details: str = "",
+    ) -> None:
+        """Tell the supervisor that a task has failed for good.
+
+        The scheduler is the component that knows a task will not be retried
+        again, so it is the component that escalates.  An escalation is a
+        request for judgement, not another attempt.
+        """
+        await self._publish(
+            MessageKind.ESCALATION,
+            task=task,
+            attempt=attempt,
+            recipient="supervisor",
+            reason=reason,
+            severity=severity,
+            details=details,
+        )
 
     async def _publish_cancellation(self, task_id: str, reason: str) -> None:
         """Tell a task that it is being cancelled."""

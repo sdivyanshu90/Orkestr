@@ -19,7 +19,7 @@ dressing it up.
 | Trials per (scenario, strategy) | 3 |
 | Total runs | 96 |
 | Provider | deterministic mock (`mock-deterministic-v1`) |
-| Wall-clock duration of the suite | 42.9 s |
+| Wall-clock duration of the suite | 46.0 s |
 | Machine | single Linux host, Python 3.14 |
 
 ---
@@ -34,7 +34,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4252 | 0.1725 |
+| Wall-clock (s) | 0.4768 | 0.1741 |
 | Tokens used | 2267.4 | 984.9 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -48,7 +48,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4312 | 0.1796 |
+| Wall-clock (s) | 0.4732 | 0.1845 |
 | Tokens used | 2271.1 | 986.7 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -60,7 +60,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4256 | 0.1719 |
+| Wall-clock (s) | 0.4842 | 0.1833 |
 | Tokens used | 2271.9 | 986.8 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -72,7 +72,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4286 | 0.1694 |
+| Wall-clock (s) | 0.4635 | 0.1766 |
 | Tokens used | 2269.1 | 987.2 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -103,15 +103,22 @@ changes the *difficulty* of the work.
 
 | Comparison | Baseline (`single`) | Candidate | Difference | Within 1 s.d.? |
 |---|---:|---:|---:|:---:|
-| `static_two` wall-clock | 0.4252 s | 0.4312 s | **+1.4 %** | yes (s.d. ≈ 0.17) |
-| `static_four` wall-clock | 0.4252 s | 0.4256 s | **+0.1 %** | yes |
-| `adaptive` wall-clock | 0.4252 s | 0.4286 s | **+0.8 %** | yes |
+| `static_two` wall-clock | 0.4768 s | 0.4732 s | **−0.8 %** | yes (s.d. ≈ 0.18) |
+| `static_four` wall-clock | 0.4768 s | 0.4842 s | **+1.6 %** | yes |
+| `adaptive` wall-clock | 0.4768 s | 0.4635 s | **−2.8 %** | yes |
 
-The standard deviation across runs (0.17 s) is roughly **40 % of the mean**
-(0.43 s). Every difference between strategies is one to two orders of
-magnitude smaller than that spread. **No strategy is demonstrably faster or
-slower than the baseline in this experiment**, and the correct reading of
-this table is "no effect was detectable", not "multi-agent is 1.4 % slower".
+The standard deviation across runs (0.18 s) is roughly **37 % of the mean**
+(0.48 s). Every difference between strategies is one to two orders of
+magnitude smaller than that spread, and **the sign of the difference is not
+stable across strategies** — `static_two` and `adaptive` came out marginally
+faster, `static_four` marginally slower. **No strategy is demonstrably faster
+or slower than the baseline in this experiment**, and the correct reading of
+this table is "no effect was detectable" — not "multi-agent is 1.6 % slower"
+and not "multi-agent is 2.8 % faster".
+
+A second, independent observation points the same way: re-running the suite
+produces a *different* sign for the same comparison. Wall-clock figures in
+this document are only meaningful alongside their standard deviations.
 
 Two of the six comparisons per strategy are reported by the harness as
 *unchanged* (the verified completion rate and the tool-call count are
@@ -140,31 +147,36 @@ with no context cost.
 
 | Scenario | `single` | `static_two` | `static_four` | `adaptive` |
 |---|---:|---:|---:|---:|
-| `independent_parallel` | 0.382 | 0.366 | 0.379 | 0.391 |
-| `tightly_coupled` | 0.656 | 0.672 | 0.645 | 0.657 |
-| `multi_file_refactor` | 0.339 | 0.335 | 0.339 | 0.336 |
-| `bug_fix_regression` | 0.663 | 0.686 | 0.680 | 0.647 |
-| `integration_conflict` | 0.118 | 0.114 | 0.117 | 0.117 |
-| `failing_worker` | 0.391 | 0.412 | 0.402 | 0.417 |
-| `single_agent_preferred` | 0.351 | 0.374 | 0.365 | 0.359 |
-| `meaningful_parallel` | 0.501 | 0.490 | 0.478 | 0.506 |
+| `independent_parallel` | 0.460 | 0.447 | 0.449 | 0.450 |
+| `tightly_coupled` | 0.744 | 0.728 | 0.698 | 0.703 |
+| `multi_file_refactor` | 0.393 | 0.377 | 0.397 | 0.361 |
+| `bug_fix_regression` | 0.645 | 0.714 | 0.747 | 0.668 |
+| `integration_conflict` | 0.152 | 0.146 | 0.146 | 0.145 |
+| `failing_worker` | 0.424 | 0.441 | 0.452 | 0.441 |
+| `single_agent_preferred` | 0.415 | 0.373 | 0.403 | 0.355 |
+| `meaningful_parallel` | 0.581 | 0.561 | 0.581 | 0.584 |
 
 Two observations:
 
 - **The scenarios are not distinguished by strategy.** The spread within a
-  row (e.g. `meaningful_parallel`: 0.478–0.506, a 6 % range) is the same
+  row (e.g. `meaningful_parallel`: 0.561–0.584, a 4 % range) is the same
   size as the spread across strategies, and both are dwarfed by the
-  between-scenario spread (0.118–0.686). The dominant variable is the
+  between-scenario spread (0.145–0.747). The dominant variable is the
   scenario, not the orchestration strategy.
-- **`integration_conflict` is much faster than everything else** (0.118 s)
+- **`integration_conflict` is much faster than everything else** (0.15 s)
   because the run aborts at the integration boundary instead of running the
   full test suite. Time is not a proxy for success — a run that fails
   early can be the fastest run in the suite.
 
-An earlier revision of this report claimed a 36 % penalty for fixed fan-out
-on the tightly coupled scenario. That figure came from a run made while the
-integration engine still mis-classified parallel patches as stale, which
-short-circuited those runs. The measurement above supersedes it.
+Two earlier revisions of this report claimed effects that the current
+measurement does not support: a 36 % penalty for fixed fan-out on the
+tightly coupled scenario, and a consistent "multi-agent is slower" direction.
+The first came from a run made while the integration engine still
+mis-classified parallel patches as stale, which short-circuited those runs.
+The second came from a run whose per-strategy ordering happened to be
+consistent; re-running the suite changes the sign. Both were withdrawn, and
+the withdrawal is recorded here rather than quietly edited away — a benchmark
+whose numbers only ever come out one way is not reporting, it is asserting.
 
 ### 3.5 Integration conflicts are detected, and they are not free
 
@@ -240,13 +252,17 @@ serial execution estimated at 90.0s; best parallel option uses 2 worker(s) at ~6
 parallelism improves estimated wall-clock time by 22.5%
 ```
 
-The prediction of a 22.5 % improvement was **not** observed. The predicted
-speed-up is derived from the *estimated* task durations (60 s each, supplied
-by the plan), while the real work took well under a second; the model is
-therefore predicting an improvement in a quantity that the mock provider
-makes vacuous. This is recorded here rather than quietly omitted: the
-selector's speed-up estimate has not been validated against reality, and
-until a latency-bearing provider exists it cannot be.
+The prediction of a 22.5 % improvement was **not** observed: the measured
+differences are under 3 %, and the sign is not stable across strategies or
+across re-runs of the suite. The predicted speed-up is derived from the
+*estimated* task durations (60 s each, supplied by the plan), while the real
+work took well under a second; the model is therefore predicting an
+improvement in a quantity that the mock provider makes vacuous.
+
+This is recorded here rather than quietly omitted. The selector's speed-up
+estimate has not been validated against reality, and until a latency-bearing
+provider exists it cannot be. It is the second item on the list in
+[`docs/improvement-audit.md`](improvement-audit.md).
 
 ---
 

@@ -363,6 +363,7 @@ class AgentLoop:
                                 if isinstance(call.arguments.get("command"), (list, tuple))
                                 else [],
                                 task_id=self.task_id,
+                                sender=self.actor,
                             )
                         )
                     )
