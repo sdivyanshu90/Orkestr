@@ -92,7 +92,6 @@ async def test_a_permanently_unavailable_provider_fails_safely(
 async def test_a_worker_crash_does_not_corrupt_the_run(tmp_path: Path, repo: Path) -> None:
     """An unexpected exception in a worker must be contained."""
     from agent_squad.agents.runner import WorkerRunner
-    from agent_squad.benchmark.chaos import install_runner_crash
 
     config = make_config(tmp_path, repo, "chaos_crash")
     orchestrator = Orchestrator(config, data_dir=tmp_path / "data")

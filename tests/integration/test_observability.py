@@ -80,7 +80,7 @@ def test_the_model_spans_record_the_real_usage(traced_run) -> None:
 def test_the_task_spans_nest_inside_the_run_span(traced_run) -> None:
     """The span tree must reflect the actual call structure."""
     spans = {s.span_id: s for s in traced_run.tracer.recorder.spans}
-    run_span = next(s for s in spans.values() if s.name == "run")
+    next(s for s in spans.values() if s.name == "run")
     task_spans = [s for s in spans.values() if s.name == "task"]
     assert task_spans
     for task_span in task_spans:

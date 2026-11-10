@@ -33,11 +33,9 @@ from agent_squad.models.task import (
     Role,
     TaskSpec,
 )
-from agent_squad.orchestrator import Orchestrator
 from agent_squad.observe.tracing import Tracer
+from agent_squad.orchestrator import Orchestrator
 from agent_squad.strategy.heuristics import CoordinationModel
-
-from helpers import two_independent_spec
 
 
 def graph_of(*files: str) -> TaskGraph:
