@@ -54,27 +54,50 @@ class IntegrationEngine:
         return overlaps
 
     def detect_stale(
-        self, patches: list[PatchArtifact], base_revision: str
+        self,
+        patches: list[PatchArtifact],
+        base_revision: str,
+        dependencies: dict[str, tuple[str, ...]] | None = None,
     ) -> list[PatchArtifact]:
-        """Patches whose base content is not the current integration tree.
+        """Patches whose base content is not the tree they were computed against.
 
-        Patches are applied in dependency order and the integration tree is
-        committed after each successful application.  A patch is stale when
-        the *tree* it was computed against differs from the integration
-        tree's current tree.
+        A patch is *stale* when the tree it was computed against is not the
+        tree the orchestrator expects it to apply to.  The expectation
+        follows the dependency structure:
+
+        * an independent task's patch was computed against the run's base
+          tree;
+        * a dependent task's patch was computed against the head its
+          dependency produced.
 
         Trees are compared rather than commit ids because the integration
-        engine creates its own commits (with different messages) for the same
-        content, so the commit ids differ while the content is identical.
+        engine creates its own commits (with different messages) for the
+        same content, so the commit ids differ while the content is
+        identical.
+
+        Note that a patch is *not* stale merely because an earlier,
+        unrelated patch has since been applied: that is the normal case for
+        parallel work, and the patch either applies cleanly or conflicts,
+        which are different outcomes.
         """
+        dependencies = dependencies or {}
+        base_tree = self.worktrees.tree_of(base_revision)
+        head_trees: dict[str, str] = {}
         stale: list[PatchArtifact] = []
-        current_tree = self.worktrees.tree_of(base_revision)
+
         for patch in patches:
-            expected = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
-            if expected and current_tree and expected != current_tree:
+            expected = base_tree
+            deps = dependencies.get(patch.task_id, ())
+            for dependency in deps:
+                candidate = head_trees.get(dependency)
+                if candidate:
+                    expected = candidate
+                    break
+            actual = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
+            if actual and expected and actual != expected:
                 stale.append(patch)
                 continue
-            current_tree = patch.head_tree or current_tree
+            head_trees[patch.task_id] = patch.head_tree or expected
         return stale
 
 
@@ -88,6 +111,7 @@ class IntegrationEngine:
         run_id: str = "",
         task_id: str | None = None,
         run_checks: bool = True,
+        dependencies: dict[str, tuple[str, ...]] | None = None,
     ) -> IntegrationResult:
         """Apply the patches to a fresh integration worktree and verify them."""
         result = IntegrationResult(passed=False)
@@ -128,10 +152,17 @@ class IntegrationEngine:
                 )
 
             current_head = base_revision
-            current_tree = self.worktrees.tree_of(base_revision)
+            head_trees: dict[str, str] = {}
+            base_tree = self.worktrees.tree_of(base_revision)
             for patch in patches:
-                expected_tree = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
-                if expected_tree and current_tree and expected_tree != current_tree:
+                expected_tree = base_tree
+                for dependency in (dependencies or {}).get(patch.task_id, ()):
+                    candidate = head_trees.get(dependency)
+                    if candidate:
+                        expected_tree = candidate
+                        break
+                actual_tree = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
+                if actual_tree and expected_tree and actual_tree != expected_tree:
                     result.conflicts.append(
                         ConflictRecord(
                             task_id=patch.task_id,
@@ -139,8 +170,8 @@ class IntegrationEngine:
                             kind="stale_patch",
                             files=patch.files,
                             detail=(
-                                f"patch was produced against tree {expected_tree[:12]} "
-                                f"but the integration tree is at {current_tree[:12]}"
+                                f"patch was produced against tree {actual_tree[:12]} "
+                                f"but the orchestrator expected {expected_tree[:12]}"
                             ),
                         )
                     )
@@ -168,7 +199,7 @@ class IntegrationEngine:
                 current_head = self.worktrees.commit_in_worktree(
                     workspace, f"agent-squad: integrate {patch.task_id}"
                 )
-                current_tree = self.worktrees.tree_of(current_head)
+                head_trees[patch.task_id] = self.worktrees.tree_of(current_head)
 
             if result.conflicts:
                 result.error = (

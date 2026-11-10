@@ -235,8 +235,8 @@ The precise version follows.
 
 **Task status transitions, per (task, attempt).** `store/state.py:
 transition_task` compares the caller's `attempt` argument with the stored
-`state.attempt` and raises `StaleAttemptError` on a mismatch (lines 223-230);
-`assert_transition` rejects illegal moves (`models/task.py:101`). Because the
+`state.attempt` and raises `StaleAttemptError` on a mismatch (lines 332-339);
+`assert_transition` rejects illegal moves (`models/task.py:108`). Because the
 attempt counter is monotonic and only incremented by `start_attempt`, a
 superseded attempt cannot overwrite a newer result. The event append and the
 projection update happen in one SQLite transaction, so the log and the
@@ -245,12 +245,14 @@ projection cannot diverge in the dangerous direction.
 Two caveats:
 
 - Fencing is **opt-in per call**. `transition_task` only fences when the
-  caller passes `attempt=`. The scheduler omits it for the
-  `RETRY_SCHEDULED`/`READY` transitions
-  (`scheduler/engine.py:298-302`, `:327`, `:364`, `:395`), for the initial
-  "all tasks → READY" sweep (`scheduler/engine.py:146`), and for
-  `Scheduler._cancel_task` (`scheduler/engine.py:487`). `recovery.py:
-  recover_run` also calls `transition_task(..., READY)` without an attempt.
+  caller passes `attempt=`. The scheduler now passes it on every transition
+  it makes inside `_execute` — `RUNNING`, `TIMED_OUT`, `RETRY_SCHEDULED`,
+  `READY`, `FAILED` and `SUCCEEDED` — but it omits it for the initial
+  "all tasks → READY" sweep (`scheduler/engine.py:153-154`), for the
+  `BLOCKED` sweep that follows a failed dependency
+  (`scheduler/engine.py:172-175`), and for `Scheduler._cancel_task`
+  (`scheduler/engine.py:532-535`). `recovery.py:recover_run` also calls
+  `transition_task(..., READY)` without an attempt.
 - `assert_transition` returns without error when `current == target`, so a
   repeated identical transition is legal and appends a second
   `TASK_STATUS_CHANGED` event. The projection is idempotent; the log is not
@@ -297,7 +299,7 @@ What exists instead:
   `:417-429`).
 - `recovery.verify_side_effects` reconstructs a key at read time as
   `f"{task_id}#{attempt}"` and returns every attempt that started but never
-  finished (`recovery.py:209-245`). It is a report, not a stored key.
+  finished (`recovery.py:212-249`). It is a report, not a stored key.
 - `Scheduler.idempotency_prefix` is used **only** to derive the backoff
   jitter. It is not attached to any operation.
 - `Scheduler._task_heads` (task → head revision) is used to pick the base
@@ -334,7 +336,7 @@ processes. The `threading.RLock` serialises writers inside one process.
 
 Nested use of `Database.transaction` is *not* savepoint-based: if a
 transaction is already open, the inner block joins it and issues neither
-`BEGIN` nor `COMMIT`/`ROLLBACK` (`store/db.py:190-201`). An inner failure
+`BEGIN` nor `COMMIT`/`ROLLBACK` (`store/db.py:186-201`). An inner failure
 that is swallowed by the caller therefore leaves the outer transaction able
 to commit partial work.
 
@@ -344,8 +346,8 @@ to commit partial work.
 
 | Operation | Location |
 | --- | --- |
-| Task status transition | `store/state.py:transition_task` (lines 216-270) |
-| Attempt start (counter + owner + lease + event) | `store/state.py:start_attempt` (lines 275-315) |
+| Task status transition | `store/state.py:transition_task` (lines 307-379) |
+| Attempt start (counter + owner + lease + event) | `store/state.py:start_attempt` (lines 381-424) |
 | Run creation / status change | `store/state.py:create_run`, `set_run_status` |
 | Task upsert | `store/state.py:upsert_task` |
 | Approval creation / decision | `store/state.py:create_approval`, `decide_approval` |
@@ -355,15 +357,15 @@ to commit partial work.
 
 | Operation | Location | Consequence |
 | --- | --- | --- |
-| Token / cost accumulation | `store/state.py:update_usage` (lines 317-339) | `TaskState.tokens_used` and `cost_used_usd` exist only in the `tasks` table |
-| Verification report | `store/state.py:set_verification` (lines 341-357) | `TaskState.verification` exists only in the `tasks` table |
+| Token / cost accumulation | `store/state.py:update_usage` (lines 426-448) | `TaskState.tokens_used` and `cost_used_usd` exist only in the `tasks` table |
+| Verification report | `store/state.py:set_verification` (lines 450-464) | `TaskState.verification` exists only in the `tasks` table |
 
 **Table only, event appended elsewhere (a row can exist with no event):**
 
 | Row | Written by | Event appended separately by |
 | --- | --- | --- |
 | `messages` | `store/state.py:record_message` (its own transaction) | `agents/messaging.py:MessageBus.publish` (a second transaction) |
-| `artifacts` | `store/state.py:save_artifact` (its own transaction) | `agents/runner.py:199-211` (`PATCH_CAPTURED`) |
+| `artifacts` | `store/state.py:save_artifact` (its own transaction) | `agents/runner.py:211-225` (`PATCH_CAPTURED`) |
 
 ### 5.4 Crash between event append and projection update
 
@@ -498,16 +500,17 @@ operation the CLI invokes:
 
 | Deadline | Value | Enforcement | Code |
 | --- | --- | --- | --- |
-| Per-task | `task.budget.deadline_s` or `config.scheduler.default_task_timeout_s` (900 s) | `asyncio.wait_for` around the whole worker execution | `scheduler/engine.py:103-106`, `:266-275` |
-| Per-command | `config.sandbox.wall_time_s` (120 s) | `asyncio.wait_for(proc.communicate(...))`, then `os.killpg(proc.pid, 9)` and a 5 s grace to reap output | `sandbox/limits.py:204-222` |
+| Per-task | `task.budget.deadline_s` or `config.scheduler.default_task_timeout_s` (900 s) | `asyncio.wait_for` around the whole worker execution | `scheduler/engine.py:103-106`, `:279-289` |
+| Per-command | `config.sandbox.wall_time_s` (120 s) | `asyncio.wait_for(proc.communicate(...))`, then `os.killpg(proc.pid, 9)` and a 5 s grace to reap output | `sandbox/limits.py:229-247` |
 | CPU time | `config.sandbox.cpu_time_s` (60 s) | `RLIMIT_CPU` → `SIGXCPU` | `sandbox/limits.py:_preexec` |
 | Address space / file size | `memory_mb` (2048) / 64 MB | `RLIMIT_AS`, `RLIMIT_FSIZE` | `sandbox/limits.py:_preexec` |
-| Verification command | `criterion.timeout_s` or `config.verification.command_timeout_s` (600 s) | `Sandbox.run(timeout_s=...)` | `verification/checks.py:run_criterion`, `:151` |
+| Verification command | `criterion.timeout_s` or `config.verification.command_timeout_s` (600 s) | `Sandbox.run(timeout_s=...)` | `verification/checks.py:run_criterion`, `:185` |
 | Git subprocess | 120 s | `subprocess.run(timeout=120)` → `subprocess.TimeoutExpired` | `workspace/worktree.py:git` (line 51) |
 
-On a task timeout, `asyncio.TimeoutError` is caught at
-`scheduler/engine.py:276`, the task transitions to `TIMED_OUT`, and — if
-attempts remain — to `RETRY_SCHEDULED` and back to `READY`.
+On a task timeout, `TimeoutError` (`asyncio.TimeoutError` is the same class
+in Python 3.11 and later) is caught at `scheduler/engine.py:290`, the task
+transitions to `TIMED_OUT`, and — if attempts remain — to `RETRY_SCHEDULED`
+and back to `READY`.
 
 `RLIMIT_CPU` delivers `SIGXCPU`, which a child process may catch or ignore.
 There is no escalation to `SIGKILL` on the CPU limit; the only `SIGKILL` is
@@ -521,12 +524,12 @@ the wall-clock timeout's `killpg`.
 `AgentLoop.run(cancellation=...)`.
 
 `AgentLoop.run` checks `cancellation.is_set()` at two points: at the top of
-each iteration (`agents/base.py:133-134`) and immediately before each tool
-call (`:194-195`). Both raise `agent_squad.errors.CancelledError`, which is
-caught at `:224-225` and turned into `error_class="cancelled"`.
+each iteration (`agents/base.py:138-139`) and immediately before each tool
+call (`:209-210`). Both raise `agent_squad.errors.CancelledError`, which is
+caught at `:239-240` and turned into `error_class="cancelled"`.
 
 `Scheduler.run` checks the same event before dispatching each batch
-(`scheduler/engine.py:150-154`) and cancels any outstanding tasks when it
+(`scheduler/engine.py:158-168`) and cancels any outstanding tasks when it
 fires.
 
 ### 7.3 Gaps in propagation
@@ -541,12 +544,12 @@ fires.
   process and there is no IPC, so the `asyncio.Event` in the orchestrator
   process is never set. The run continues and will overwrite the stored
   status when it finishes (`Scheduler.run` calls `state.set_run_status` at
-  `:223`).
+  `:237`).
 - **Cancelling `Sandbox.run` leaves the child process running.** The
-  `except asyncio.TimeoutError` clause in `sandbox/limits.py:209` does not
-  catch `asyncio.CancelledError`, so when the outer `asyncio.wait_for`
-  cancels the worker, the `killpg` is never reached and the subprocess is
-  orphaned, still holding the worktree and its resources.
+  `except TimeoutError` clause in `sandbox/limits.py:234` does not catch
+  `asyncio.CancelledError` (they are distinct classes), so when the outer
+  `asyncio.wait_for` cancels the worker, the `killpg` is never reached and
+  the subprocess is orphaned, still holding the worktree and its resources.
 - **Blocking calls stall the whole event loop.** `workspace/worktree.py:git`
   uses blocking `subprocess.run`, and every SQLite call is blocking. While
   either runs, `asyncio.wait_for` cannot fire, the cancellation token cannot
@@ -561,21 +564,21 @@ fires.
 transaction and records `owner` and `lease_expires_at`.
 `store/state.py:transition_task` compares the caller's `attempt` with the
 stored value and raises `StaleAttemptError` on a mismatch. The scheduler
-passes `attempt=` on the RUNNING, FAILED, TIMED_OUT and SUCCEEDED
-transitions.
+passes `attempt=` on the RUNNING, TIMED_OUT, RETRY_SCHEDULED, READY, FAILED
+and SUCCEEDED transitions.
 
 ### 8.2 Stale worker writes
 
-When a terminal transition is rejected as stale, the scheduler **swallows**
+When a terminal transition is rejected as stale, the scheduler **suppresses**
 the error and still returns the status it intended
-(`scheduler/engine.py:295`, `:323`, `:347`, `:390`, `:414`). The store keeps
+(`scheduler/engine.py:301`, `:327`, `:349`, `:392`, `:421`). The store keeps
 the newer value; the in-memory `TaskOutcome` reports the older intent. The
 orchestrator then overwrites only the counters from the store
 (`orchestrator.py:Orchestrator.run`, the `outcomes[state.id].tokens_used`
 merge), keeping the scheduler's status. So
 `RunOutcome.outcomes[task].status` can disagree with the persisted
 `TaskState.status`. The same divergence exists at
-`scheduler/engine.py:259-260`, where a stale RUNNING transition makes the
+`scheduler/engine.py:271-274`, where a stale RUNNING transition makes the
 scheduler return its default `FAILED` outcome for a task that is in fact
 running elsewhere.
 
@@ -584,10 +587,10 @@ running elsewhere.
 `transition_task` without an `attempt` argument performs no fencing. The
 scheduler uses unfenced calls for:
 
-- the initial sweep of all tasks to `READY` (`scheduler/engine.py:146`);
-- the `RETRY_SCHEDULED` and `READY` transitions on the retry path
-  (`:298-302`, `:327`, `:364`, `:395`);
-- `Scheduler._cancel_task` (`:487`).
+- the initial sweep of all tasks to `READY` (`scheduler/engine.py:153-154`);
+- the `BLOCKED` sweep that follows a failed dependency
+  (`scheduler/engine.py:172-175`);
+- `Scheduler._cancel_task` (`scheduler/engine.py:532-535`).
 
 `recovery.recover_run` also calls it unfenced. Two schedulers running
 against the same database — which `BEGIN IMMEDIATE` permits, since it
@@ -658,7 +661,7 @@ Each item names the scenario that breaks it.
    first task's deadline cannot fire and no other task progresses.
 2. **The `retryable` attribute on exceptions is ignored.**
    The scheduler uses a hard-coded error-class set
-   (`scheduler/engine.py:361`).
+   (`scheduler/engine.py:478-493`).
    *Scenario:* the provider returns 401 Unauthorized. `ModelError` (not
    retryable) is raised, but the scheduler retries the task up to
    `max_attempts` times, multiplying latency and token spend on a
@@ -684,38 +687,46 @@ Each item names the scenario that breaks it.
    moment. All four slots sleep for up to 30 s while nothing executes, and a
    fifth ready task cannot start.
 6. **The run summary can disagree with the store.**
-   Stale transitions are swallowed and the intended status is still returned
-   (`scheduler/engine.py:295`, `:323`, `:347`, `:390`, `:414`).
+   Stale transitions are suppressed and the intended status is still returned
+   (`scheduler/engine.py:301`, `:327`, `:349`, `:392`, `:421`).
    *Scenario:* a superseded attempt finishes after a newer attempt succeeded.
    The scheduler reports the old intent; the store reports the newer value.
    `RunOutcome.outcomes` and `StateStore.list_task_states` disagree, and the
    orchestrator's merge keeps the scheduler's status.
-7. **Context trimming can orphan tool results.**
-   `agents/base.py:AgentLoop._enforce_context_budget` pops `messages[2]`
-   repeatedly. Index 2 is normally the assistant turn that carries
-   `tool_calls`; if the token budget is satisfied by that single pop, the
-   matching `tool` message survives while the assistant turn that declared it
-   is gone, producing a transcript with a tool result whose `tool_call_id`
-   has no matching assistant call. This is reproducible directly against
-   `AgentLoop._enforce_context_budget`: trimming a six-message transcript
-   removes the assistant turn for `tc1` and leaves the `tool` message with
-   `tool_call_id="tc1"` in place.
-   *Scenario:* a long task exceeds `max_turn_tokens` (60 000 by default).
-   The trimmed transcript is sent to an OpenAI-compatible endpoint, which
-   rejects it with 400. The agent fails with `error_class="model"`, which is
-   retried, and fails again the same way on every attempt.
-8. **Recovery does not resume anything.**
-   `recovery.recover_run` marks tasks `READY`; `Scheduler.run` ignores the
-   persisted statuses, and `Orchestrator.run` overwrites the run record with
-   `INSERT OR REPLACE`.
+7. **Context trimming no longer orphans tool results.**
+   *Remediation status: closed.* The earlier revision of this document
+   described `AgentLoop._enforce_context_budget` popping `messages[2]`
+   repeatedly and leaving the matching `tool` message behind when the
+   assistant turn that declared it was removed — a transcript whose
+   `tool_call_id` had no matching assistant call, which an
+   OpenAI-compatible endpoint rejects with 400.
+   `agents/base.py:AgentLoop._enforce_context_budget` now removes an
+   assistant turn together with the tool results that answer it, via
+   `AgentLoop._drop_orphan_tool_results`. Trimming a six-message transcript
+   that carries `tc1` and `tc2` leaves the `tool` message for `tc1` removed
+   along with its assistant turn.
+   *Remaining gap:* the trimmer drops whole turns, so it can still cut a
+   long tool result in the middle of a multi-turn exchange; it only
+   guarantees that the transcript stays internally consistent.
+8. **Recovery resumes a run, but only a run in which nothing completed.**
+   `recovery.resume_run` re-reads `run-config.json` and the task specs from
+   the store, rebuilds the graph and restarts the scheduler — but
+   `Scheduler.run` transitions *every* task to `READY`
+   (`scheduler/engine.py:153-154`), and `SUCCEEDED → READY` is not a legal
+   transition, so resuming a partially completed run raises
+   `ValidationError: illegal task transition succeeded -> ready`.
+   `recovery.recover_run` on its own still does not restart the scheduler,
+   and `Orchestrator.run` still re-plans from scratch and re-runs every
+   task, including tasks that already succeeded.
    *Scenario:* a run crashes after three of five tasks succeeded.
-   `agent-squad resume` reports them as completed and sets the interrupted
-   tasks to `READY`, but starting the orchestrator again with the same run id
-   re-plans and re-runs all five tasks, duplicating the completed work and
-   re-spending its tokens.
+   `agent-squad resume` reports the three as completed and sets the
+   interrupted tasks to `READY`, but the resume then fails on the first
+   already-succeeded task; and starting the orchestrator again with the same
+   run id re-plans and re-runs all five tasks, duplicating the completed work
+   and re-spending its tokens.
 9. **`rebuild_projection` loses accounting.**
-   It reconstructs status, errors, attempt, owner and timestamps, but not
-   `tokens_used`, `cost_used_usd` or `verification`.
+   It reconstructs status, errors, attempt, owner and timestamps, and now
+   also the lease, but not `tokens_used`, `cost_used_usd` or `verification`.
    *Scenario:* recovery is run after a crash. The run reports zero tokens
    and zero cost for every task, and the verification results are gone.
 10. **The `messages` and `artifacts` tables can be ahead of the log.**
@@ -765,30 +776,103 @@ Each item names the scenario that breaks it.
     *Scenario:* an operator inspects the state machine, sees a task in
     `FAILED`, and assumes it will not be retried, while the store would in
     fact accept `FAILED → READY`.
-18. **`AWAITING_APPROVAL` and the approval flow are unreachable.**
-    `create_approval` is never called and the scheduler never enters the
-    state.
+18. **The approval flow reaches one action; `AWAITING_APPROVAL` is still
+    unreachable as a task state.**
+    *Remediation status: partly closed.* `StateStore.create_approval` is now
+    called by `agents/approval.py:ApprovalBroker.request`, which creates the
+    approval row, publishes an `APPROVAL_REQUEST` message and polls for a
+    decision until `ApprovalConfig.approval_timeout_s` elapses.
+    `TaskStatus.AWAITING_APPROVAL` is still never entered: the gate blocks
+    inside `agents/base.py:AgentLoop._invoke_tool` and surfaces as a tool
+    error with `error_class="policy"`, so the scheduler never sees the task
+    as awaiting approval.
+    The reachable action is narrow: `PolicyEngine._requires_approval`
+    remaps `run_command` to `git.push`/`git.commit` only when `argv[0]` is
+    literally `"git"`, so `["/usr/bin/git", "push", ...]` is not gated, and
+    the four approval-gated tools (`commit_changes`, `push_changes`,
+    `delete_path`, `http_request`) are not registered at all.
     *Scenario:* an operator expects a push to require approval and finds
-    that the run completes without any approval request.
-19. **Budget ceilings are not enforced at run or provider scope.**
-    `providers/budget.py:BudgetManager` is never instantiated;
-    `BudgetConfig.run_token_limit`, `run_cost_limit_usd`,
-    `per_task_token_limit` and `per_provider_token_limit` have no effect.
-    *Scenario:* a run configured with a run-level cost ceiling spends far
-    beyond it, because only the per-task ceilings
-    (`task.budget.max_tokens`, `task.budget.max_cost_usd`) are checked, and
-    only after the model call that incurred the cost.
+    that a `run_command` spelled with an absolute path to `git` completes
+    without any approval request.
+19. **Budget ceilings are not enforced at provider scope.**
+    *Remediation status: partly closed.* `providers/budget.py:BudgetManager`
+    is now instantiated by `orchestrator.py:Orchestrator.__init__` with the
+    run's `BudgetConfig`, and `agents/base.py:AgentLoop.run` calls
+    `budget.check(scope, extra_tokens=projected)` before every model call,
+    for the `task:<id>` scope and for the `"run"` scope. So
+    `BudgetConfig.run_token_limit` and `run_cost_limit_usd` now have an
+    effect, and the per-task ceilings come from `TaskSpec.budget`.
+    `BudgetConfig.per_task_token_limit`, `per_task_cost_limit_usd` and
+    `per_provider_token_limit` are still never read by any code, so there
+    is no provider-level ceiling at all.
+    *Scenario:* a run is configured with a run-level cost ceiling and two
+    providers, one of which is expensive. The run-level ceiling stops the
+    run once the projection exceeds it, but nothing stops a single provider
+    from being used without limit inside that budget.
 20. **A child's `CancelledError` can abort the whole run.**
     `Scheduler.run` handles a task handle whose `result()` raises
-    `CancelledError` with `except Exception` (line 195), which does not catch
+    `CancelledError` with `except Exception` (line 209), which does not catch
     `asyncio.CancelledError` in Python 3.11; the exception then reaches the
-    `except asyncio.CancelledError` handler at line 209, which cancels every
+    `except asyncio.CancelledError` handler at line 223, which cancels every
     running handle and re-raises.
     *Scenario:* one worker coroutine is cancelled independently of the run;
     the entire run is torn down rather than that one task failing.
 21. **Masked error classes.**
-    `agents/runner.py:167-169` sets `result.error_class = result.error_class
+    `agents/runner.py:180-183` sets `result.error_class = result.error_class
     or "tool"` when the diff capture fails.
     *Scenario:* an attempt fails with `error_class="model"` and the diff
     capture then also fails; the recorded class stays `"model"` and the
     diff-capture failure is not visible in the state.
+
+## 10. Fault injection
+
+`src/agent_squad/benchmark/chaos.py` is a fault-injection harness, with
+tests in `tests/chaos/test_fault_injection.py` (pytest marker `chaos`). The
+point is not to "test that errors happen" but to assert the *recovery
+contract*: after a given fault the run must reach a specific, named state,
+and it must reach it without corrupting state or silently dropping work.
+
+### 10.1 The catalogue
+
+`benchmark/chaos.py:Fault` enumerates the injectable faults:
+
+| Fault | How it is produced | Expected outcome (from the module's own catalogue) |
+| --- | --- | --- |
+| `provider_unavailable` | `InjectedFaultProvider` raises `ModelError` | The task fails after exhausting its retries; the run reports the failure; no state is corrupted. |
+| `provider_flaky` | `InjectedFaultProvider` raises `TransientModelError` | The first N calls fail transiently; the retry policy completes the work. |
+| `model_garbage` | `InjectedFaultProvider` returns a `ModelResponse` whose text is not valid JSON | The provider returns output that fails schema validation; the run fails cleanly rather than acting on malformed data. |
+| `worker_crash` | `CrashyRunner` raises a bare `RuntimeError` | The worker raises an unexpected exception; the scheduler records the failure and the dependent task is blocked, not silently skipped. |
+| `slow_worker` | `InjectedFaultProvider` sleeps past the task deadline | The worker exceeds its deadline; the task times out and is retried or reported as timed out. |
+| `lost_message` | `ChaosHarness.drop_next_message` records a marker | A message is dropped; the run continues because no message is load-bearing for correctness. |
+| `duplicate_message` | asserted directly against `agents/messaging.py:MessageBus.publish` | A message is delivered twice; the bus rejects the second copy. |
+| `stale_ownership` | asserted directly against `store/state.py:StateStore.transition_task` | A late worker tries to write state for a superseded attempt; the write is fenced out. |
+| `conflicting_patches` | two tasks editing the same file (`benchmark/repo_fixture.py:conflicting_spec`) | Two workers edit the same file; integration detects the conflict. |
+| `stalled_task` | `InjectedFaultProvider` sleeps | A task makes no progress; the stall detector fires. |
+
+`benchmark/chaos.py:assert_safe_failure` is the shared assertion: a failed
+run must not report success, must record at least one failed task, and must
+not report a task as both failed and succeeded.
+
+### 10.2 What the harness does not cover
+
+- **`stalled_task` has no detector to fire.** The catalogue says "the stall
+  detector fires", but `config.SchedulerConfig.stall_detection_s` is
+  declared and never read, and the injected fault is implemented as the same
+  sleep as `slow_worker`. The fault is therefore indistinguishable from a
+  slow worker: the task times out rather than being detected as stalled.
+- **`lost_message` does not actually drop a message.**
+  `ChaosHarness.drop_next_message` appends a marker to a list; it is not
+  wired into `agents/messaging.py:MessageBus`, so no message is ever lost.
+- **The faults are injected at the seams, not inside the runtime.** The
+  provider wrapper and the runner wrapper stand in for the real provider and
+  the real worker. A fault that can only occur inside `StateStore`,
+  `EventLog` or the sandbox — a torn transaction, a half-written artifact,
+  a `killpg` that does not happen — is not injectable today.
+- **The approval path is not exercised.** A `REQUIRE_APPROVAL` decision
+  blocks in `agents/base.py:AgentLoop._invoke_tool` until an operator
+  answers; there is no fault that simulates an absent, delayed or
+  conflicting decision, so the timeout behaviour of
+  `ApprovalConfig.approval_timeout_s` is untested.
+- **The chaos tests use the mock provider.** They exercise the scheduler,
+  the store and the retry policy, not a real provider, a real sandbox or a
+  real git remote.

@@ -88,7 +88,7 @@ code,
 
 .app {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 344px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -329,6 +329,7 @@ textarea {
 
 .run-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 11px;
 }
@@ -363,10 +364,31 @@ textarea {
 }
 
 .run-id {
-  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.run-status {
+  vertical-align: top;
+  text-align: right;
+}
+
+.run-table th:nth-child(1),
+.run-table td:nth-child(1) {
+  width: 62%;
+}
+
+.run-table th:nth-child(2),
+.run-table td:nth-child(2) {
+  width: 38%;
 }
 
 /* -------------------------------------------------------------------- pill */
@@ -379,6 +401,9 @@ textarea {
   border: 1px solid var(--border);
   white-space: nowrap;
   text-transform: lowercase;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pill-ok {

@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import type { RunSummary } from '../types';
-import { formatTimestamp } from '../lib/format';
+import { formatShortTimestamp } from '../lib/format';
 import StatusPill, { runTone } from './StatusPill';
 
 interface RunListProps {
@@ -52,8 +52,6 @@ export default function RunList({
         <tr>
           <th>run</th>
           <th>status</th>
-          <th>strategy</th>
-          <th>updated</th>
         </tr>
       </thead>
       <tbody>
@@ -72,14 +70,17 @@ export default function RunList({
                 }
               }}
             >
-              <td className="mono run-id" title={run.run_id}>
-                {run.run_id}
-              </td>
               <td>
+                <div className="mono run-id" title={run.run_id}>
+                  {run.run_id}
+                </div>
+                <div className="muted small run-sub" title={`updated ${run.updated_at}`}>
+                  {run.strategy ?? 'no strategy'} · {formatShortTimestamp(run.updated_at)}
+                </div>
+              </td>
+              <td className="run-status">
                 <StatusPill value={run.status} tone={runTone(run.status)} />
               </td>
-              <td className="muted small">{run.strategy ?? '-'}</td>
-              <td className="muted small nowrap">{formatTimestamp(run.updated_at)}</td>
             </tr>
           );
         })}

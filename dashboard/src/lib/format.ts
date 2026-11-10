@@ -44,6 +44,15 @@ export function formatClock(epochMs: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+export function formatShortTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '-';
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return '-';
+  const date = new Date(parsed);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /**
  * Format a timeline tick.  The precision follows the span of the window so
  * that short runs (which can finish in well under a second) still produce

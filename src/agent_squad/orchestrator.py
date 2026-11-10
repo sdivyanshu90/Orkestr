@@ -409,8 +409,12 @@ class Orchestrator:
 
         engine = IntegrationEngine(config=self.config, worktrees=self.worktrees, log=self.log)
         base = self.worktrees.head_revision() if self.worktrees.has_commits() else ""
+        dependencies = {task.id: task.depends_on for task in graph.tasks.values()}
         result = await engine.integrate(
-            patches, base_revision=base, run_id=self.config.run_id
+            patches,
+            base_revision=base,
+            run_id=self.config.run_id,
+            dependencies=dependencies,
         )
         bundle = engine.build_patch_bundle(patches, base_revision=base)
         bundle_path = self.paths.root / "patch-bundle.diff"
