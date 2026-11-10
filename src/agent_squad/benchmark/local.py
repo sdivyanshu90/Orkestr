@@ -30,6 +30,7 @@ measured size so that the exclusion is auditable rather than implicit.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import re
@@ -41,7 +42,6 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import InfrastructureError, ValidationError
-from ..models.run import RunStatus
 from .harness import STRATEGIES
 
 #: Where the GGUF weights live.  Overridable so the harness can point at a
@@ -246,6 +246,8 @@ class ServerConfig:
     extra_args: tuple[str, ...] = ()
     startup_timeout_s: float = 300.0
     request_timeout_s: float = 600.0
+    shared_gpu: int = 1
+    """How many models will share the GPU at once."""
 
     def resolve_port(self) -> int:
         if self.port:
@@ -324,17 +326,24 @@ def total_ram_mb() -> int:
         return 0
 
 
-def plan_gpu_layers(spec: LocalModelSpec, vram_mb: int, ram_mb: int) -> int:
+def plan_gpu_layers(
+    spec: LocalModelSpec, vram_mb: int, ram_mb: int, *, shared: int = 1
+) -> int:
     """Choose how many layers to place on the GPU.
 
     The rule is deliberately simple and *recorded* rather than clever: put
     the whole model on the GPU when it comfortably fits, otherwise place as
     many layers as fit in the VRAM budget with a margin, and leave the rest
     on the CPU.
+
+    ``shared`` is the number of models that will be served concurrently.  The
+    VRAM budget is divided between them, so three small models running at
+    once each get a third of the card rather than all claiming the whole of
+    it.
     """
     if vram_mb <= 0:
         return 0
-    budget = int(vram_mb * 0.85)
+    budget = int(vram_mb * 0.85 / max(1, shared))
     if spec.size_mb <= budget:
         return 999  # all layers
     # Assume roughly 40 layers per billion parameters at Q4, and that the
@@ -372,7 +381,9 @@ class LlamaServer:
         gpu_layers = (
             self.config.gpu_layers
             if self.config.gpu_layers is not None
-            else plan_gpu_layers(spec, free_vram_mb(), total_ram_mb())
+            else plan_gpu_layers(
+                spec, free_vram_mb(), total_ram_mb(), shared=self.config.shared_gpu
+            )
         )
         args = [
             str(self.config.server_path),
@@ -710,13 +721,19 @@ async def run_local_suite(
     server_config: ServerConfig | None = None,
     base_url: str | None = None,
     keep_models: bool = False,
+    parallel_models: int = 1,
+    parallel_runs: int = 1,
 ) -> dict[str, Any]:
     """Run the local-model benchmark.
 
     ``base_url`` points at an *already running* OpenAI-compatible server.  If
-    it is not given, a `llama-server` is started for each model in turn.
-    """
+    it is not given, a `llama-server` is started for each model.
 
+    ``parallel_models`` serves that many models at once and ``parallel_runs``
+    runs that many of a model's scenarios concurrently.  Both are recorded in
+    the report, because a wall-clock time measured under contention is not
+    comparable with one measured alone.
+    """
     catalog = {spec.id: spec for spec in LOCAL_MODEL_CATALOG}
     selected = [catalog[m] for m in models] if models else list(catalog.values())
     if not selected:
@@ -728,97 +745,103 @@ async def run_local_suite(
     server_stats: list[dict[str, Any]] = []
     started_at = time.time()
 
-    for spec in selected:
-        model_path = spec.local_path(model_dir)
-        if not model_path.exists():
+    config = server_config or ServerConfig()
+    config = ServerConfig(
+        server_path=config.server_path,
+        host=config.host,
+        port=config.port,
+        context_size=config.context_size,
+        threads=config.threads,
+        gpu_layers=config.gpu_layers,
+        extra_args=config.extra_args,
+        startup_timeout_s=config.startup_timeout_s,
+        request_timeout_s=config.request_timeout_s,
+        shared_gpu=max(1, parallel_models),
+    )
+
+    model_semaphore = asyncio.Semaphore(max(1, parallel_models))
+    run_semaphore = asyncio.Semaphore(max(1, parallel_runs))
+
+    async def run_one(spec: LocalModelSpec) -> list[LocalTrial]:
+        """Serve one model and run every scenario/strategy combination."""
+        async with model_semaphore:
+            model_path = spec.local_path(model_dir)
+            if not model_path.exists() and not base_url:
+                download_model(spec, model_dir)
             if base_url:
-                results.append(
-                    LocalTrial(
-                        model=spec.id,
-                        family=spec.family,
-                        scenario_id="-",
-                        strategy="-",
-                        workers=0,
-                        trial=0,
-                        run_id="-",
-                        status="skipped",
-                        verified=False,
-                        tokens_used=0,
-                        cost_usd=0.0,
-                        wall_clock_s=0.0,
-                        model_calls=0,
-                        tool_calls=0,
-                        tool_call_parse_failures=0,
-                        verification_failures=0,
-                        error=f"weights not present at {model_path}",
-                    )
-                )
-                continue
-            download_model(spec, model_dir)
-
-        if base_url:
-            endpoint = base_url
-            gpu_layers = 0
-            load_seconds = 0.0
-            handle = None
-        else:
-            server = LlamaServer(server_config)
-            try:
-                handle = server.start(spec, model_path)
-            except InfrastructureError as exc:
-                results.append(
-                    LocalTrial(
-                        model=spec.id,
-                        family=spec.family,
-                        scenario_id="-",
-                        strategy="-",
-                        workers=0,
-                        trial=0,
-                        run_id="-",
-                        status="error",
-                        verified=False,
-                        tokens_used=0,
-                        cost_usd=0.0,
-                        wall_clock_s=0.0,
-                        model_calls=0,
-                        tool_calls=0,
-                        tool_call_parse_failures=0,
-                        verification_failures=0,
-                        error=exc.message,
-                    )
-                )
-                continue
-            endpoint = handle.base_url
-            gpu_layers = handle.gpu_layers
-            load_seconds = handle.load_seconds
-
-        stats = parse_server_stats(handle.stderr_path if handle else None)
-        server_stats.append(
-            {
-                "model": spec.id,
-                "family": spec.family,
-                "gpu_layers": gpu_layers,
-                "load_seconds": round(load_seconds, 2),
-                "size_mb": spec.size_mb,
-                **stats,
-            }
-        )
-
-        try:
-            for scenario_id in scenario_ids:
-                for strategy in strategy_names:
-                    for trial in range(trials):
-                        outcome = await _run_one(
-                            spec=spec,
-                            endpoint=endpoint,
-                            scenario_id=scenario_id,
-                            strategy=strategy,
-                            trial=trial,
+                endpoint = base_url
+                gpu_layers = 0
+                load_seconds = 0.0
+                handle = None
+            else:
+                server = LlamaServer(config)
+                try:
+                    handle = server.start(spec, model_path)
+                except InfrastructureError as exc:
+                    return [
+                        LocalTrial(
+                            model=spec.id,
+                            family=spec.family,
+                            scenario_id="-",
+                            strategy="-",
+                            workers=0,
+                            trial=0,
+                            run_id="-",
+                            status="error",
+                            verified=False,
+                            tokens_used=0,
+                            cost_usd=0.0,
+                            wall_clock_s=0.0,
+                            model_calls=0,
+                            tool_calls=0,
+                            tool_call_parse_failures=0,
+                            verification_failures=0,
+                            error=exc.message,
                         )
-                        results.append(outcome)
-        finally:
-            if handle is not None:
-                handle.stop()
+                    ]
+                endpoint = handle.base_url
+                gpu_layers = handle.gpu_layers
+                load_seconds = handle.load_seconds
+
+            stats = parse_server_stats(handle.stderr_path if handle else None)
+            server_stats.append(
+                {
+                    "model": spec.id,
+                    "family": spec.family,
+                    "gpu_layers": gpu_layers,
+                    "load_seconds": round(load_seconds, 2),
+                    "size_mb": spec.size_mb,
+                    **stats,
+                }
+            )
+
+            async def one(scenario_id: str, strategy: str, trial: int) -> LocalTrial:
+                async with run_semaphore:
+                    return await _run_one(
+                        spec=spec,
+                        endpoint=endpoint,
+                        scenario_id=scenario_id,
+                        strategy=strategy,
+                        trial=trial,
+                    )
+
+            try:
+                combinations = [
+                    (scenario_id, strategy, trial)
+                    for scenario_id in scenario_ids
+                    for strategy in strategy_names
+                    for trial in range(trials)
+                ]
+                outcomes = await asyncio.gather(
+                    *(one(*combination) for combination in combinations)
+                )
+                return list(outcomes)
+            finally:
+                if handle is not None:
+                    handle.stop()
+
+    for batch in await asyncio.gather(*(run_one(spec) for spec in selected)):
+        results.extend(batch)
 
     aggregates = _aggregate(results)
     return {
@@ -831,6 +854,8 @@ async def run_local_suite(
         "scenarios": scenario_ids,
         "strategies": strategy_names,
         "trials_per_combination": trials,
+        "parallel_models": parallel_models,
+        "parallel_runs": parallel_runs,
         "server_stats": server_stats,
         "trials": [t.to_dict() for t in results],
         "aggregates": aggregates,
@@ -842,8 +867,15 @@ async def run_local_suite(
             "capability being measured.",
             "Cost is zero because the models are local; the token counts are "
             "the real, provider-reported ones.",
+            (
+                f"Models were served concurrently (parallel_models={parallel_models}, "
+                f"parallel_runs={parallel_runs}), so wall-clock times are NOT "
+                "comparable between models. The verified rate, the token counts "
+                "and the tool-call counts are."
+            ),
         ],
     }
+
 
 
 async def _run_one(
@@ -901,6 +933,13 @@ async def _run_one(
         started = time.monotonic()
         error: str | None = None
         status = "error"
+        tokens = 0
+        model_calls = 0
+        tool_calls = 0
+        verification_failures = 0
+        protected_requests = 0
+        verified_tasks = 0
+        wall = 0.0
         try:
             outcome = await orchestrator.run(
                 spec_body["objective"], request_spec=spec_body, integrate=False
@@ -908,14 +947,12 @@ async def _run_one(
             status = outcome.status.value
             tokens = outcome.summary.tokens_used
             events = orchestrator.log.read(run_id)
-            model_calls = sum(
-                1 for e in events if e.type is EventType.MODEL_CALL
-            )
+            model_calls = sum(1 for e in events if e.type is EventType.MODEL_CALL)
             tool_calls = sum(1 for e in events if e.type is EventType.TOOL_INVOKED)
             verification_failures = sum(
                 1 for e in events if e.type is EventType.VERIFICATION_FAILED
             )
-            sum(
+            protected_requests = sum(
                 1
                 for e in events
                 if e.type is EventType.HUMAN_APPROVAL
@@ -925,12 +962,7 @@ async def _run_one(
             verified_tasks = outcome.summary.succeeded
         except Exception as exc:
             error = str(exc)[:500]
-            tokens = 0
-            model_calls = 0
-            tool_calls = 0
-            verification_failures = 0
             wall = time.monotonic() - started
-            verified_tasks = 0
         finally:
             await orchestrator.aclose()
 
@@ -943,7 +975,7 @@ async def _run_one(
         trial=trial,
         run_id=run_id,
         status=status,
-        verified=verified_tasks > 0 and status == RunStatus.SUCCEEDED.value,
+        verified=verified_tasks > 0 and status == "succeeded",
         tokens_used=tokens,
         cost_usd=0.0,
         wall_clock_s=wall,
@@ -951,6 +983,8 @@ async def _run_one(
         tool_calls=tool_calls,
         tool_call_parse_failures=0,
         verification_failures=verification_failures,
+        salvaged_tool_calls=provider.salvaged_calls,
+        protected_action_requests=protected_requests,
         error=error,
     )
 

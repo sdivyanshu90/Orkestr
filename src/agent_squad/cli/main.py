@@ -448,6 +448,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
                 model_dir=Path(args.model_dir) if args.model_dir else None,
                 server_config=server_config,
                 base_url=args.local_base_url or None,
+                parallel_models=args.local_parallel_models,
+                parallel_runs=args.local_parallel_runs,
             )
         )
         if args.json:
@@ -626,6 +628,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bench_parser.add_argument("--local-context", type=int, default=8192)
     bench_parser.add_argument("--local-threads", type=int, default=6)
+    bench_parser.add_argument(
+        "--local-parallel-models",
+        type=int,
+        default=2,
+        help="how many models to serve at once (the VRAM budget is divided)",
+    )
+    bench_parser.add_argument(
+        "--local-parallel-runs",
+        type=int,
+        default=2,
+        help="how many of a model's scenarios to run concurrently",
+    )
 
     return parser
 
