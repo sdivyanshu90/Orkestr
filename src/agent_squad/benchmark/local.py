@@ -516,6 +516,8 @@ class LocalTrial:
     tool_calls: int
     tool_call_parse_failures: int
     verification_failures: int
+    salvaged_tool_calls: int = 0
+    protected_action_requests: int = 0
     error: str | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -536,6 +538,8 @@ class LocalTrial:
             "tool_calls": self.tool_calls,
             "tool_call_parse_failures": self.tool_call_parse_failures,
             "verification_failures": self.verification_failures,
+            "salvaged_tool_calls": self.salvaged_tool_calls,
+            "protected_action_requests": self.protected_action_requests,
             "error": self.error,
             "notes": list(self.notes),
         }
@@ -881,6 +885,10 @@ async def _run_one(
                 "integration_test_command": ("python3", "-m", "pytest", "-q")
             },
             retry={"max_attempts": 2, "initial_backoff_s": 1.0, "max_backoff_s": 4.0},
+            # The benchmark has no human to answer an approval request, so a
+            # protected action fails fast instead of blocking the run.  The
+            # approval workflow itself is covered by the security suite.
+            approval={"approval_timeout_s": 10.0},
         )
         provider = OpenAICompatProvider(
             model=spec.id,
@@ -906,6 +914,12 @@ async def _run_one(
             tool_calls = sum(1 for e in events if e.type is EventType.TOOL_INVOKED)
             verification_failures = sum(
                 1 for e in events if e.type is EventType.VERIFICATION_FAILED
+            )
+            sum(
+                1
+                for e in events
+                if e.type is EventType.HUMAN_APPROVAL
+                and e.payload.get("status") == "requested"
             )
             wall = time.monotonic() - started
             verified_tasks = outcome.summary.succeeded
@@ -975,6 +989,8 @@ def _aggregate(trials: list[LocalTrial]) -> dict[str, Any]:
                 sum(t.tool_calls for t in real) / len(real), 2
             ),
             "verification_failures": sum(t.verification_failures for t in real),
+            "salvaged_tool_calls": sum(t.salvaged_tool_calls for t in real),
+            "protected_action_requests": sum(t.protected_action_requests for t in real),
             "errors": [t.error for t in real if t.error][:3],
         }
     return out

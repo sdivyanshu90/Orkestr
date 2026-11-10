@@ -105,6 +105,27 @@ class VerificationGate:
 
         started = time.monotonic()
         criteria = list(task.acceptance_criteria)
+        unverifiable = tuple(task.metadata.get("unverifiable_criteria") or ())
+        if unverifiable:
+            # A requirement that could not be expressed is not a satisfied
+            # requirement.  The task cannot be verified, and the reason is
+            # reported precisely rather than the requirement quietly
+            # disappearing.
+            report = VerificationReport(
+                task_id=task.id,
+                passed=False,
+                level="validation_executed",
+                criterion_states={},
+                unverified=list(unverifiable),
+                error=(
+                    "the plan contains requirements that could not be expressed, "
+                    "so the task cannot be verified: " + "; ".join(unverifiable)
+                ),
+                workspace=str(workspace),
+                duration_s=time.monotonic() - started,
+            )
+            self._record(task, report)
+            return report
         if not criteria:
             report = VerificationReport(
                 task_id=task.id,

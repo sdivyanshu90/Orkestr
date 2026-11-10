@@ -17,20 +17,27 @@ The list below is what survived that process.
 
 | # | Gap | Severity | Blocks the research question? |
 |---|---|---|---|
-| 1 | No latency-bearing provider | **Critical** | Yes — the latency half |
-| 2 | No adversarial task fixtures | **Critical** | Yes — the completion-rate half |
-| 3 | The strategy selector is uncalibrated | High | Partially |
-| 4 | No replanning during execution | High | No |
-| 5 | The event log grows without bound | Medium | No |
-| 6 | Message validation state is not durable | Medium | No |
-| 7 | The verification gate re-runs the whole suite per task | Medium | No |
-| 8 | The scheduler's ready scan is O(V + E) per tick | Low | No |
-| 9 | `ScopeOverlap` detection is O(V² · F) | Low | No |
-| 10 | Dependency integrity is not managed | Medium | No |
-| 11 | No static type checking in the toolchain | Medium | No |
-| 12 | Delegation is bounded but not implemented | Low | No |
-| 13 | No counterfactual branching from a checkpoint | Low | No |
-| 14 | The dashboard's timeline is derived, not persisted | Low | No |
+| 1 | Adversarial task fixtures | **Critical** | Yes — the completion-rate half |
+| 2 | The strategy selector is uncalibrated | High | Partially |
+| 3 | No replanning during execution | High | No |
+| 4 | The event log grows without bound | Medium | No |
+| 5 | Message validation state is not durable | Medium | No |
+| 6 | The verification gate re-runs the whole suite per task | Medium | No |
+| 7 | The scheduler's ready scan is O(V + E) per tick | Low | No |
+| 8 | `ScopeOverlap` detection is O(V² · F) | Low | No |
+| 9 | Dependency integrity is not managed | Medium | No |
+| 10 | No static type checking in the toolchain | Medium | No |
+| 11 | Delegation is bounded but not implemented | Low | No |
+| 12 | No counterfactual branching from a checkpoint | Low | No |
+| 13 | The dashboard's timeline is derived, not persisted | Low | No |
+
+> **Update.** Gap 1 in the previous revision of this document was "no
+> latency-bearing provider". That gap has been **closed**: the runtime now
+> benchmarks against eight real, locally served models
+> (`src/agent_squad/benchmark/local.py`), and the measured results are in
+> [`docs/local-benchmark-results.md`](local-benchmark-results.md). What
+> remains open is the *calibration* of the strategy selector against those
+> measurements, which is gap 2.
 
 ---
 

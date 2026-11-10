@@ -100,7 +100,7 @@ class PlannedTask(BaseModel):
     description: str = ""
     role: Role = Role.IMPLEMENTER
     depends_on: list[str] = Field(default_factory=list)
-    acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
+    acceptance_criteria: list[dict[str, Any]] = Field(default_factory=list)
     anticipated_files: list[str] = Field(default_factory=list)
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
@@ -113,6 +113,7 @@ class PlannedTask(BaseModel):
     edits: list[Edit] = Field(default_factory=list)
     commands: list[list[str]] = Field(default_factory=list)
     notes: str = ""
+    unverifiable_criteria: list[str] = Field(default_factory=list)
 
 
 class LLMPlan(BaseModel):
@@ -210,7 +211,9 @@ class RuleBasedPlanner(BasePlanner):
                 raise ValidationError(f"planner produced duplicate task id {task_id!r}")
             seen_ids.add(task_id)
 
-            criteria = tuple(item.acceptance_criteria)
+            criteria = tuple(
+                AcceptanceCriterion.model_validate(c) for c in item.acceptance_criteria
+            )
             spec_obj = TaskSpec(
                 id=task_id,
                 run_id=request.run_id,
@@ -233,7 +236,14 @@ class RuleBasedPlanner(BasePlanner):
                     max_cost_usd=item.cost_budget_usd,
                     max_attempts=item.max_attempts,
                 ),
-                metadata={"notes": item.notes} if item.notes else {},
+                metadata={
+                    k: v
+                    for k, v in {
+                        "notes": item.notes,
+                        "unverifiable_criteria": tuple(item.unverifiable_criteria),
+                    }.items()
+                    if v
+                },
             )
             tasks.append(spec_obj)
             briefs[task_id] = TaskBrief(
@@ -322,7 +332,27 @@ class LLMPlanner(BasePlanner):
         return result
 
     def _normalise(self, plan: LLMPlan) -> LLMPlan:
-        """Correct out-of-range scalar fields and record every correction."""
+        """Correct recoverable plan defects and record every correction.
+
+        Three classes of defect are handled, and the handling is deliberately
+        asymmetric:
+
+        * **Duplicate criterion ids** are disambiguated.  The criteria
+          themselves are intact, so renaming the second occurrence changes
+          nothing about what is checked.
+        * **A criterion that cannot be expressed** -- a ``pytest_selector``
+          with no selector, a command with no argv -- is *dropped from the
+          plan* and recorded as an **unverifiable** requirement.  It is not
+          simply forgotten: the task carries the list, and the verification
+          gate refuses to pass a task with an unverifiable requirement.  A
+          broken criterion must never become a satisfied one.
+        * **Out-of-range scalars** -- an unknown ``complexity``, a priority
+          outside 0-100, a non-positive duration -- are corrected to a safe
+          default and recorded.
+
+        Anything structural (a task with no id, a dependency on a task that
+        does not exist) remains a hard failure.
+        """
         normalised: list[PlannedTask] = []
         for task in plan.tasks:
             data = task.model_dump()
@@ -353,8 +383,51 @@ class LLMPlanner(BasePlanner):
             attempts = data.get("max_attempts")
             if not isinstance(attempts, int) or not 1 <= attempts <= 20:
                 data["max_attempts"] = 3
+
+            criteria, unverifiable = self._normalise_criteria(task)
+            data["acceptance_criteria"] = criteria
+            data["unverifiable_criteria"] = unverifiable
             normalised.append(PlannedTask.model_validate(data))
+            for note in unverifiable:
+                self.warnings.append(f"task {task.id!r}: {note}")
         return plan.model_copy(update={"tasks": normalised})
+
+    def _normalise_criteria(
+        self, task: PlannedTask
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Disambiguate ids and separate unexpressible criteria."""
+        criteria: list[dict[str, Any]] = []
+        unverifiable: list[str] = []
+        seen: set[str] = set()
+        for raw in task.acceptance_criteria:
+            data = dict(raw)
+            criterion_id = str(data.get("id") or "").strip()
+            if not criterion_id:
+                unverifiable.append("an acceptance criterion has no id and was dropped")
+                continue
+            if criterion_id in seen:
+                suffix = 2
+                candidate = f"{criterion_id}-{suffix}"
+                while candidate in seen:
+                    suffix += 1
+                    candidate = f"{criterion_id}-{suffix}"
+                self.warnings.append(
+                    f"task {task.id!r}: duplicate criterion id {criterion_id!r} "
+                    f"renamed to {candidate!r}"
+                )
+                criterion_id = candidate
+            seen.add(criterion_id)
+            data["id"] = criterion_id
+            try:
+                criterion = AcceptanceCriterion.model_validate(data)
+            except Exception as exc:
+                unverifiable.append(
+                    f"acceptance criterion {criterion_id!r} could not be expressed "
+                    f"({exc}); the task cannot be verified without it"
+                )
+                continue
+            criteria.append(criterion.model_dump())
+        return criteria, unverifiable
 
     def _user_prompt(self, request: PlanRequest) -> str:
         parts = [f"Objective: {request.objective}"]
@@ -396,7 +469,9 @@ class LLMPlanner(BasePlanner):
         tasks: list[TaskSpec] = []
         briefs: dict[str, TaskBrief] = {}
         for item in plan.tasks:
-            criteria = tuple(item.acceptance_criteria)
+            criteria = tuple(
+                AcceptanceCriterion.model_validate(c) for c in item.acceptance_criteria
+            )
             task = TaskSpec(
                 id=item.id,
                 run_id=request.run_id,
@@ -419,6 +494,14 @@ class LLMPlanner(BasePlanner):
                     max_cost_usd=item.cost_budget_usd,
                     max_attempts=item.max_attempts,
                 ),
+                metadata={
+                    k: v
+                    for k, v in {
+                        "notes": item.notes,
+                        "unverifiable_criteria": tuple(item.unverifiable_criteria),
+                    }.items()
+                    if v
+                },
             )
             tasks.append(task)
             briefs[task.id] = TaskBrief(
