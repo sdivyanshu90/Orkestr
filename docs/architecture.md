@@ -662,7 +662,7 @@ flowchart LR
 | `agent_squad/orchestrator.py` | Composition root and run lifecycle: storage setup, inspection, planning, strategy, scheduling, integration, reporting. | `Orchestrator`, `RunPaths`, `RunOutcome` |
 | `agent_squad/config.py` | Typed, validated, serialisable run configuration. | `RunConfig`, `ProviderConfig`, `RoleConfig`, `SandboxConfig`, `WorkspaceConfig`, `BudgetConfig`, `RetryConfig`, `SchedulerConfig`, `StrategyConfig`, `VerificationConfig`, `ObservabilityConfig`, `ApprovalConfig`, `load_config`, `build_run_config` |
 | `agent_squad/errors.py` | Explicit failure taxonomy mapping errors onto retry / fail-fast / escalate policies. | `ErrorClass`, `AgentSquadError`, `ValidationError`, `PolicyError`, `BudgetExceeded`, `ModelError`, `TransientModelError`, `ToolError`, `ConflictError`, `VerificationError`, `CancelledError`, `StaleAttemptError`, `InfrastructureError`, `DependencyError` |
-| `agent_squad/ids.py` | Lexicographically sortable, Crockford base32 identifiers. | `new_id`, `run_id`, `task_id`, `message_id`, `artifact_id`, `worktree_id`, `span_id`, `attempt_id` |
+| `agent_squad/ids.py` | Lexicographically sortable, Crockford base32 identifiers. | `new_id`, `run_id`, `task_id`, `message_id`, `artifact_id`, `worktree_id`, `span_id` |
 | `agent_squad/models/task.py` | Task specification, role and status enums, acceptance criteria, and the legal transition table. | `TaskSpec`, `TaskState`, `TaskStatus`, `Role`, `CheckKind`, `AcceptanceCriterion`, `RepoScope`, `Budget`, `Complexity`, `LEGAL_TRANSITIONS`, `TERMINAL_STATUSES`, `ADVISORY_CHECKS`, `assert_transition` |
 | `agent_squad/models/run.py` | Run-level status, verification levels and strategy decisions. | `RunStatus`, `RunSummary`, `VerificationLevel`, `StrategyName`, `StrategyDecision`, `RUN_TERMINAL_STATUSES` |
 | `agent_squad/models/message.py` | Typed inter-agent message protocol with discriminated-union payloads. | `Message`, `MessageKind`, `make_message`, `STATE_EFFECTING_KINDS`, `INFORMATIONAL_KINDS` |
@@ -670,10 +670,12 @@ flowchart LR
 | `agent_squad/models/artifact.py` | Content-addressed artifacts and their provenance. | `Artifact`, `ArtifactKind`, `Provenance`, `PatchManifest`, `FileManifestEntry`, `sha256_bytes` |
 | `agent_squad/dag/graph.py` | Validated task DAG: cycle detection, ordering, levels, critical path, scope overlap. | `TaskGraph`, `ScopeOverlap` |
 | `agent_squad/scheduler/engine.py` | The async DAG scheduler: ready queue, concurrency limit, retries, deadlines, cancellation. | `Scheduler`, `TaskOutcome` |
-| `agent_squad/agents/base.py` | The bounded agent loop and the system prompt. | `AgentLoop`, `WorkerResult`, `SYSTEM_PROMPT`, `build_provenance`, `publish_progress` |
+| `agent_squad/agents/base.py` | The bounded agent loop and the system prompt. | `AgentLoop`, `WorkerResult`, `SYSTEM_PROMPT`, `build_provenance` |
 | `agent_squad/agents/runner.py` | Executes one task attempt: worktree, tools, prompt, diff capture, patch artifact, evidence. | `WorkerRunner` |
-| `agent_squad/agents/messaging.py` | Validating, recording message router with version fencing. | `MessageBus`, `Subscription` |
+| `agent_squad/agents/messaging.py` | Validating, recording message router with version fencing, plus the supervisor's structured per-task inbox. | `MessageBus`, `Subscription`, `SupervisorChannel`, `TaskInbox` |
 | `agent_squad/agents/approval.py` | Human-in-the-loop approval broker: raises the request, blocks the attempt, reads the decision from the durable store. | `ApprovalBroker` |
+| `agent_squad/benchmark/chaos.py` | The fault catalogue and the injectable fault wrappers used by the chaos suite. | `Fault`, `FaultSpec`, `InjectedFaultProvider`, `CrashyRunner`, `ChaosHarness`, `install_provider_faults`, `install_runner_crash`, `assert_safe_failure` |
+| `agent_squad/benchmark/repo_fixture.py` | Deterministic repository and request fixtures, shipped with the package so the harness and the tests use the same trees. | `init_repo`, `sample_spec`, `conflicting_spec` |
 | `agent_squad/tools/base.py` | Tool protocol, registry and the per-task `ToolContext`. | `Tool`, `ToolRegistry`, `ToolContext`, `ToolResult` |
 | `agent_squad/tools/fs.py` | Filesystem tools (`read_file`, `write_file`, `list_dir`, `delete_path`) with scope and symlink checks. | `ReadFileTool`, `WriteFileTool`, `ListDirTool`, `DeletePathTool` |
 | `agent_squad/tools/exec.py` | Command and git tools, executed through the sandbox. | `RunCommandTool`, `GitDiffTool`, `GitStatusTool`, `CommitChangesTool`, `PushChangesTool` |
@@ -704,7 +706,7 @@ flowchart LR
 | `agent_squad/recovery.py` | Crash recovery: rebuild the projection, classify interrupted tasks, surface unresolved side effects. | `recover_run`, `verify_side_effects`, `find_run`, `RecoveryReport` |
 | `agent_squad/replay/recorder.py` | Records model exchanges as artifacts and serves them back for replay. | `Exchange`, `RecordingProvider`, `RecordedProvider`, `load_exchanges` |
 | `agent_squad/replay/replayer.py` | State replay and control-plane replay against a recorded transcript. | `replay_run`, `ReplayResult` |
-| `agent_squad/observe/tracing.py` | Optional OpenTelemetry tracing with an in-memory span recorder fallback. | `Tracer`, `SpanRecorder`, `Span` |
+| `agent_squad/observe/tracing.py` | Optional OpenTelemetry tracing with an in-memory span recorder fallback and deterministic sampling. | `Tracer`, `SpanRecorder`, `Span` |
 | `agent_squad/observe/metrics.py` | Run-level efficiency metrics for the benchmark harness. | `RunMetrics`, `StrategyAggregate`, `Comparison` |
 | `agent_squad/observe/events.py` | Structured operator logging, separate from the event log. | `StructuredLogger`, `Timer` |
 | `agent_squad/benchmark/harness.py` | Runs each scenario under each strategy and derives metrics from the run's own event log. | `run_suite`, `run_scenario_strategy`, `TrialResult`, `SuiteResult`, `STRATEGIES` |
@@ -733,9 +735,47 @@ flowchart LR
   status.
 
 `MessageBus._validate` rejects duplicate message ids, unknown senders or
-recipients, and stale or duplicate versions for a `(sender,
-correlation_id or task_id or id)` key. The bus is the only sanctioned channel
-for one agent to influence another; there is no free-text side channel.
+recipients, and an explicitly quoted version that is not newer than the
+conversation's latest. The bus is the only sanctioned channel for one agent
+to influence another; there is no free-text side channel.
+
+Worker identities are derived from the task they execute
+(`implementer:task-7`), so they are registered with `register_actor` when
+the worker starts rather than enumerated in advance.
+
+**Version semantics.** `Message.version` defaults to `0`, meaning
+*unversioned*: the bus assigns the next version in the `(sender,
+correlation_id)` conversation. A sender that explicitly quotes a positive
+version is claiming to supersede that version, and is rejected if it is not
+newer. This distinction matters — an earlier revision conflated "default
+version" with "explicitly quoted version", which made the second message in
+a conversation look stale.
+
+**Which kinds are actually produced.** Nine of the eleven kinds are emitted
+by a real run and asserted by `tests/integration/test_message_protocol.py`:
+
+| Kind | Direction | Emitted when |
+|---|---|---|
+| `task_assignment` | supervisor → worker | The task is dispatched |
+| `progress` | worker → supervisor | The worktree is created |
+| `artifact_published` | worker → supervisor | A patch artifact is produced |
+| `handoff` | worker → supervisor | The attempt succeeds |
+| `failure_report` | worker → supervisor | The attempt fails |
+| `escalation` | worker → supervisor | The failure is not retryable |
+| `revision_request` | supervisor → worker | Verification rejected the work |
+| `verification_request` | supervisor → integration | Verification rejected the work |
+| `cancellation` | supervisor → worker | The run is cancelled |
+
+`approval_request` is emitted by the approval broker. `approval_decision` is
+defined and validated but the decision currently travels through the
+approval table rather than as a message.
+
+**The supervisor's view.** `SupervisorChannel` subscribes to *every*
+message and routes each into the affected task's `TaskInbox`, a structured
+record of assignments, progress, handoffs, failures, escalations, revisions
+and cancellations. The supervisor reads that structured record, never a raw
+transcript — which is the same principle the task brief follows: shared
+information is deliberate, versioned and minimal.
 
 ---
 
@@ -781,8 +821,15 @@ baseline is a legitimate outcome, and `benchmark/report.py` shows every
 comparison against the baseline, including the ones where the multi-agent
 strategy lost.
 
-The suite does not currently run end to end; see limitation 10 in
-[section 13](#13-known-limitations).
+The suite runs end to end: `agent-squad benchmark --suite full --trials 3`
+executes 96 runs and produces `benchmarks/results/suite-full-3trials.json`.
+Its *methodological* limits are described in
+[`docs/benchmark-methodology.md`](benchmark-methodology.md) §7 and its
+measured results — including the negative ones — in
+[`docs/benchmark-results.md`](benchmark-results.md). The headline: no
+strategy improved the verified completion rate, and the wall-clock
+differences between strategies are far below the run-to-run standard
+deviation. See limitation 9 in [section 13](#13-known-limitations).
 
 ---
 
@@ -907,29 +954,36 @@ document describes what the code does, not what it is meant to do.
 5. **No in-flight replanning.** `READY -> PENDING` and `BLOCKED -> PENDING`
    are legal, and `EventType.PLAN_REVISED` exists, but nothing in the runtime
    produces a revised plan.
-6. **Observability is not wired into the runtime.** `observe/tracing.py`
-   provides a `Tracer` with an optional OpenTelemetry exporter and an
-   in-memory `SpanRecorder`, and `observe/metrics.py` defines the metric
-   dataclasses, but no component in the control plane opens a span. The
-   `ObservabilityConfig` fields (`otlp_endpoint`, `trace_sample_rate`) are
-   read by nothing. `observe/events.py`'s `StructuredLogger` is likewise not
-   used by the orchestrator; operator-facing output today is the `rich`
-   rendering in the CLI and the HTTP API.
-7. **The HTTP API is optional and undeclared.** `agent_squad/api/server.py`
-   provides `create_app()` and a `main()` entry point, but it imports
-   `fastapi` and `uvicorn` behind a `try/except ImportError`, and neither
-   package is listed in `pyproject.toml` — not as a dependency and not as an
-   extra. A clean install therefore has no HTTP interface at all; the API
-   only works where those packages happen to be present. There is also no
-   web dashboard in this repository: the API exposes run state as JSON, and
-   anything that draws it lives elsewhere.
+6. **Observability is now wired, but the metric dataclasses are still
+   read by the harness only.** `observe/tracing.py`'s `Tracer` is
+   constructed by the orchestrator and spans are opened for the run, the
+   inspection, the plan, the strategy decision, every task, every model
+   call and the integration; `observe/events.py`'s `StructuredLogger` writes
+   the operator-facing lifecycle log. Both are covered by
+   `tests/integration/test_observability.py`. `observe/metrics.py`'s
+   dataclasses are consumed by the benchmark harness but not by the
+   runtime itself, and `ObservabilityConfig.trace_sample_rate` is honoured
+   by the tracer (spans below the rate are dropped and counted in
+   `Tracer.sampled_out`, so the loss is visible rather than silent).
+7. **The HTTP API is an optional extra, and the dashboard is optional
+   too.** `agent_squad/api/server.py` provides `create_app()` and a
+   `main()` entry point, and imports `fastapi` behind a `try/except
+   ImportError`; `fastapi` and `uvicorn` are declared in the `api` extra.
+   A clean install therefore has no HTTP interface at all. The dashboard
+   under `dashboard/` is a separate React application that reads the API's
+   JSON; it is not required by, or required for, the runtime, and its
+   contract with the backend is asserted by
+   `tests/integration/test_dashboard_contract.py`, which reads the
+   dashboard's TypeScript interfaces and checks that a live API response
+   contains every field they declare.
 8. **Not distributed.** One process, one host, one SQLite file. There is no
    remote scheduler, no cross-host coordination, no leader election, no
    broker, and no run-level ownership lock preventing two processes from
    driving the same `run_id`. The API's `create_run` endpoint starts a run
    in the background of the serving process, which is not the same thing as
    distributing the work.
-9. **The benchmark suite does not currently run end to end.** The harness
+9. **The benchmark suite runs, but it cannot answer the latency half of
+   the research question.** The harness
    is implemented (`benchmark/harness.py`, `benchmark/tasks.py`,
    `benchmark/report.py`), and its methodology is sound: each scenario runs
    once per strategy per trial against a freshly created repository, with

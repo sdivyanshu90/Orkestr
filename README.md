@@ -301,11 +301,13 @@ dashboard/               # optional React + React Flow web dashboard
 | Document | Contents |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Components, lifecycle, state machine, persistence, trust boundaries |
+| [`docs/deep-dive.md`](docs/deep-dive.md) | The invariants, the algorithms and why they are correct, complexity, extension points |
 | [`docs/design-decisions/`](docs/design-decisions/) | Six ADRs with the alternatives that were rejected |
 | [`docs/security-threat-model.md`](docs/security-threat-model.md) | Adversaries, mitigations with code references, known weaknesses |
 | [`docs/reliability.md`](docs/reliability.md) | Failure taxonomy, retry policy, durability, race analysis, known gaps |
 | [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md) | How the experiment is designed and what it can and cannot show |
 | [`docs/benchmark-results.md`](docs/benchmark-results.md) | Measured results, including negative results |
+| [`docs/improvement-audit.md`](docs/improvement-audit.md) | The gap analysis: what is missing, why it matters, what to do first |
 | [`docs/limitations.md`](docs/limitations.md) | What this system does not do |
 | [`docs/implementation-walkthrough.md`](docs/implementation-walkthrough.md) | A guided tour of the code, end to end |
 | [`docs/failure-analysis.md`](docs/failure-analysis.md) | Failures encountered while building this, and what they taught |

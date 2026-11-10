@@ -124,14 +124,14 @@ patches, real verification and a successful integration.**
 
 ## Test coverage
 
-188 tests across seven suites, all passing in ~10 s:
+268 tests across seven suites, all passing in ~31 s:
 
 | Suite | Tests | What it covers |
 |---|---:|---|
 | `tests/unit` | 104 | DAG validation, lifecycle table, policy decisions, budget accounting, evidence schema, message protocol, strategy selection, artifact provenance and invalidation |
-| `tests/integration` | 17 | The full end-to-end run with the deterministic mock provider, budget enforcement, the live FastAPI surface |
+| `tests/integration` | 78 | The full end-to-end run, budget enforcement, the live FastAPI surface, the dashboard/API contract, provider adapters against a real HTTP server, the message protocol, observability spans, role isolation, configuration wiring, concurrency limits |
 | `tests/concurrency` | 8 | Parallel execution overlap, dependency ordering, attempt fencing, cancellation, duplicate and stale messages |
-| `tests/chaos` | 9 | Transient and permanent provider failure, worker crash, timeout, malformed model output, stale ownership, duplicate message, conflicting patches, cancellation |
+| `tests/chaos` | 11 | Transient and permanent provider failure, worker crash, timeout, malformed model output, stale ownership, duplicate message, conflicting patches, cancellation |
 | `tests/recovery` | 12 | Projection rebuild, interrupted-task recovery, lease awareness, idempotency, side-effect reporting, killed-process recovery, resume |
 | `tests/security` | 24 | Sandbox limits, path traversal, symlink escape, planted binaries, injection detection, secret redaction, policy gating, approval blocking |
 | `tests/evaluation` | 14 | Benchmark reproducibility, metric integrity, variance reporting, negative-result representation |
@@ -179,66 +179,74 @@ and in the results rather than glossed over.
 
 ## Known gaps and blockers
 
-Ordered by how much they limit the project's claims.
+The full, evidence-backed analysis is in
+[`docs/improvement-audit.md`](docs/improvement-audit.md). Ordered by how much
+they limit the project's claims.
 
-1. **No latency-realistic provider evaluation.** The speed-up half of the
-   research question is untested. *Blocker: requires a paid API or a local
-   model.* Everything else about the harness is ready for it.
-2. **The chaos/fault-injection harness covers eight of the ten catalogue
-   faults.** Transient provider failure, permanent provider failure, worker
-   crash, timeout, malformed model output, stale ownership, duplicate
-   message, conflicting patches and cancellation are covered. Message loss
-   and stalled-worker detection are declared in the catalogue but have no
-   dedicated test, and the fault catalogue is not yet exposed through a
-   command-line interface.
-3. **The observer layer is only partly wired.** The event log is the
-   primary observability surface and is complete; OpenTelemetry export and
-   the span recorder are not yet emitted by the scheduler.
-4. **The strategy selector is not calibrated.** Its thresholds were chosen
-   by hand and are not fitted to the measured coordination overhead. The
-   benchmark records predictions and observations side by side, but nothing
-   feeds back.
-5. **No replanning during execution.** The plan is produced once. The
-   `plan.revised` event type and the `LLMPlanner` exist, but nothing calls
-   the planner again when execution reveals a problem.
-6. **The benchmark corpus is synthetic.** No SWE-bench subset, no real
-   repository, and every fixture was designed to succeed — so the verified
-   completion rate could not discriminate between strategies.
-7. **No multi-user or authentication model.** Anyone with filesystem access
-   to the data directory can approve a protected action.
-8. **No static type checker in the toolchain.** The code is annotated and
-   `ruff` is configured; `mypy` is not run.
+1. **No latency-bearing provider.** The speed-up half of the research
+   question is untested. *Blocker: requires a paid API or a local model.*
+   The `ModelProvider` protocol already abstracts this; the missing piece is
+   a latency-injecting wrapper, and the orchestrator needs no changes.
+2. **No adversarial task fixtures.** Every fixture is designed to succeed,
+   so the verified completion rate cannot discriminate between strategies.
+   The discriminating experiment is the one where the single-agent strategy
+   wins and the multi-agent strategy conflicts.
+3. **The strategy selector is uncalibrated.** Its thresholds were chosen by
+   hand. The benchmark publishes predictions and observations side by side,
+   but nothing feeds the comparison back. The published run shows a
+   predicted 22.5 % improvement that was **not** observed.
+4. **No replanning during execution.** `EventType.PLAN_REVISED` is read by
+   the replayer but never emitted; the plan is produced once, before the
+   scheduler starts.
+5. **The event log grows without bound.** There is no compaction or
+   retention policy, and `rebuild_projection` replays the whole log.
+6. **Message validation state is not durable.** `MessageBus._seen_ids` and
+   `_versions` are in-memory, so a message can be re-delivered after a
+   restart. The attempt fence still protects correctness; only the record
+   can duplicate.
+7. **The verification gate re-runs the whole suite per task**, which on a
+   real repository would dominate the wall-clock time.
+8. **The chaos harness covers nine of the eleven catalogue faults.** Message
+   loss and stalled-worker detection are declared but have no dedicated test.
+9. **No lockfile or type checking.** `pyproject.toml` specifies lower
+   bounds only, and `mypy` is not run — several bugs found during
+   development would have been caught by a type checker.
+10. **No multi-user or authentication model.** Anyone with filesystem access
+    to the data directory can approve a protected action.
+11. **Not distributed.** One process, one host, one SQLite file; no
+    cross-process run-ownership lock.
 
 ---
 
 ## Next steps
 
 ### Immediate (highest value)
-1. Add a provider adapter with injectable latency, and re-run the
-   benchmark. This is the only way to answer the latency half of the
-   research question.
-2. Add adversarial fixtures where a plausible decomposition yields a
+1. Add adversarial fixtures where a plausible decomposition yields a
    plausible but incorrect result, so the verified completion rate can
-   actually discriminate.
-3. Build out the chaos harness as a first-class module with a fault matrix
-   and repeatable tests, rather than one injected failure inside a
-   benchmark scenario.
+   actually discriminate. This needs no external resources and unblocks the
+   completion-rate half of the research question.
+2. Add a latency-injecting provider wrapper and re-run the benchmark. This
+   is the only way to answer the latency half.
+3. Record the selector's predicted speed-up next to the observed one, and
+   fit the coordination constants to the difference.
 
 ### Near term
-4. Wire the observer layer into the scheduler so that spans and metrics are
-   emitted, not just available.
-5. Implement bounded replanning: after a verification failure, allow the
+4. Implement bounded replanning: after a verification failure, allow the
    supervisor to revise the DAG subject to the existing delegation-depth
-   bound.
-6. Calibrate the coordination cost model against the measured per-worker
-   context duplication.
-7. Add event-log compaction and a retention policy.
+   bound, and emit `PLAN_REVISED`.
+5. Add event-log compaction and a retention policy, so recovery time stops
+   growing with the run's history.
+6. Make the message validation state durable by moving the seen-id and
+   version columns into the `messages` table.
+7. Cache pytest results per (tree, selector) pair so verification does not
+   re-run the whole suite for every task.
+8. Generate a lockfile with hashes and add `mypy` to the toolchain.
 
 ### Later
-8. Distributed execution, if the local runtime's limits are actually
-   reached. The design deliberately stops at a single host today.
 9. A SWE-bench-lite subset, once the evaluation harness is stable.
-10. Counterfactual branching from a checkpoint with an alternative
+10. Distributed execution, if the local runtime's limits are actually
+    reached. The design deliberately stops at a single host today.
+11. Counterfactual branching from a checkpoint with an alternative
     scheduling policy — the machinery is mostly in place.
 
 ---
