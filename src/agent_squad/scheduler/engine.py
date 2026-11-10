@@ -39,6 +39,7 @@ from typing import Any
 from ..config import RunConfig
 from ..dag.graph import TaskGraph
 from ..errors import StaleAttemptError
+from ..models.message import MessageKind, make_message
 from ..models.run import RunStatus, RunSummary
 from ..models.task import TaskSpec, TaskStatus
 from ..planning.brief import TaskBrief
@@ -97,6 +98,51 @@ class Scheduler:
     outcomes: dict[str, TaskOutcome] = field(default_factory=dict)
 
     # ------------------------------------------------------------- helpers
+
+    async def _publish(
+        self,
+        kind: MessageKind,
+        *,
+        task: TaskSpec,
+        attempt: int,
+        recipient: str,
+        **payload: Any,
+    ) -> None:
+        """Publish a supervisor-side message to the bus."""
+        if self.bus is None:
+            return
+        try:
+            register = getattr(self.bus, "register_actor", None)
+            if register is not None:
+                # The worker's identity must be known to the bus before it
+                # can be addressed by the supervisor.
+                register(recipient)
+            await self.bus.publish(
+                make_message(
+                    kind,
+                    run_id=self.config.run_id,
+                    sender="supervisor",
+                    recipient=recipient,
+                    task_id=task.id,
+                    correlation_id=f"{task.id}#{attempt}",
+                    **payload,
+                )
+            )
+        except Exception as exc:
+            # A message failure must not change the schedule; the event log
+            # is the durable record of what happened.
+            self.log.append(
+                EventType.MESSAGE_SENT,
+                run_id=self.config.run_id,
+                task_id=task.id,
+                attempt=attempt,
+                actor="supervisor",
+                payload={
+                    "kind": kind.value,
+                    "failed": True,
+                    "error": str(exc),
+                },
+            )
 
     def _owner(self, task: TaskSpec) -> str:
         return f"{task.role.value}:{task.id}"
@@ -157,6 +203,7 @@ class Scheduler:
             while pending or running:
                 if self.cancellation is not None and self.cancellation.is_set():
                     for task_id in sorted(pending):
+                        await self._publish_cancellation(task_id, "the run was cancelled")
                         self._cancel_task(task_id, cancelled)
                         outcomes[task_id] = TaskOutcome(
                             task_id=task_id,
@@ -273,6 +320,15 @@ class Scheduler:
             except StaleAttemptError:
                 return outcome
 
+            await self._publish(
+                MessageKind.TASK_ASSIGNMENT,
+                task=task,
+                attempt=attempt,
+                recipient=self._owner(task),
+                attempt_number=attempt,
+                base_revision=self._base_for(task),
+                objective=task.objective,
+            )
             started = time.monotonic()
             result = None
             timed_out = False
@@ -399,6 +455,29 @@ class Scheduler:
                     )
                 retryable = True
                 if attempts < max_attempts:
+                    await self._publish(
+                        MessageKind.REVISION_REQUEST,
+                        task=task,
+                        attempt=attempt,
+                        recipient=self._owner(task),
+                        reason=report.error or "the acceptance checks failed",
+                        criteria=tuple(report.failed),
+                        requested_changes=tuple(
+                            f"criterion {cid} did not pass" for cid in report.failed
+                        ),
+                    )
+                    await self._publish(
+                        MessageKind.VERIFICATION_REQUEST,
+                        task=task,
+                        attempt=attempt,
+                        recipient="integration",
+                        artifact_ids=tuple(
+                            result.evidence.source_artifact_ids
+                            if result.evidence
+                            else ()
+                        ),
+                        criteria=tuple(report.failed),
+                    )
                     await asyncio.sleep(self._backoff(attempts, task.id))
                     self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
                     continue
@@ -533,6 +612,21 @@ class Scheduler:
         with contextlib.suppress(Exception):
             self.state.transition_task(task_id, TaskStatus.CANCELLED)
         cancelled.add(task_id)
+
+    async def _publish_cancellation(self, task_id: str, reason: str) -> None:
+        """Tell a task that it is being cancelled."""
+        task = self.graph.tasks.get(task_id)
+        if task is None:
+            return
+        state = self.state.get_task_state(task_id)
+        await self._publish(
+            MessageKind.CANCELLATION,
+            task=task,
+            attempt=state.attempt if state else 0,
+            recipient=self._owner(task),
+            reason=reason,
+            scope="task",
+        )
 
     def _final_status(self, summary: RunSummary) -> RunStatus:
         if summary.cancelled:

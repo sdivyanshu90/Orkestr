@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents.approval import ApprovalBroker
-from .agents.messaging import MessageBus
+from .agents.messaging import MessageBus, SupervisorChannel
 from .agents.runner import WorkerRunner
 from .artifacts.store import ArtifactStore
 from .config import RunConfig
@@ -143,6 +143,8 @@ class Orchestrator:
             log=self.log,
             known_recipients=frozenset({SUPERVISOR, "integration"}),
         )
+        self.channel = SupervisorChannel(bus=self.bus, supervisor=SUPERVISOR)
+        self.channel.attach()
         self.budget = BudgetManager(config.budget, config.provider)
         self.budget.set_scope_limits(
             "run",
@@ -451,4 +453,6 @@ class Orchestrator:
                 a.model_dump(mode="json") for a in self.state.list_artifacts(run_id)
             ],
             "pending_approvals": self.state.pending_approvals(run_id),
+            "supervisor": self.channel.report(),
+            "messages": self.state.list_messages(run_id),
         }

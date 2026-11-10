@@ -159,7 +159,7 @@ def test_state_effecting_kinds_are_identified() -> None:
         sender="a",
         recipient="b",
         task_id="t",
-        payload={"task_id": "t", "attempt": 1},
+        payload={"attempt_number": 1},
     )
     progress = make_message(
         MessageKind.PROGRESS, run_id="r", sender="a", recipient="b", percent=1.0

@@ -25,7 +25,7 @@ from ..artifacts.store import ArtifactStore
 from ..config import RunConfig
 from ..models.artifact import ArtifactKind
 from ..models.evidence import ChangedFile, EvidencePackage, Limitation
-from ..models.message import MessageKind, make_message
+from ..models.message import Message, MessageKind, make_message
 from ..models.task import ADVISORY_CHECKS, Role, TaskSpec
 from ..planning.brief import TaskBrief
 from ..security.capabilities import capabilities_for_role
@@ -87,6 +87,12 @@ class WorkerRunner:
     ) -> WorkerResult:
         started = time.monotonic()
         worktree: Worktree | None = None
+        worker_identity = f"{task.role.value}:{task.id}"
+        if self.bus is not None:
+            # The worker's identity is derived from its task, so it is
+            # registered when the worker starts rather than enumerated up
+            # front.  This happens before any message is published.
+            self.bus.register_actor(worker_identity)
         try:
             worktree = self.worktrees.create(task.id, base_revision=base_revision)
         except Exception as exc:
@@ -110,6 +116,15 @@ class WorkerRunner:
                 "base_revision": worktree.base_revision,
                 "role": task.role.value,
             },
+        )
+
+        await self._publish(
+            MessageKind.PROGRESS,
+            task=task,
+            attempt=attempt,
+            stage="worktree_created",
+            percent=5.0,
+            recipient=self.supervisor,
         )
 
         capabilities = capabilities_for_role(task.role)
@@ -222,7 +237,57 @@ class WorkerRunner:
                     "files": [c.path for c in changed],
                 },
             )
-            self._publish_artifact(task, attempt, patch_artifact)
+            await self._publish(
+                MessageKind.ARTIFACT_PUBLISHED,
+                task=task,
+                attempt=attempt,
+                recipient=self.supervisor,
+                artifact_id=patch_artifact.id,
+                artifact_kind=patch_artifact.kind.value,
+                sha256=patch_artifact.sha256,
+            )
+
+        if result.ok:
+            await self._publish(
+                MessageKind.HANDOFF,
+                task=task,
+                attempt=attempt,
+                recipient=self.supervisor,
+                summary=result.summary[:4000] or f"{task.title} completed",
+                artifact_ids=tuple(
+                    a.id for a in [patch_artifact] if a is not None
+                ),
+                open_questions=tuple(
+                    limitation.description for limitation in evidence.limitations
+                ),
+            )
+        else:
+            await self._publish(
+                MessageKind.FAILURE_REPORT,
+                task=task,
+                attempt=attempt,
+                recipient=self.supervisor,
+                error_class=result.error_class or "unknown",
+                message=result.error or "the attempt failed",
+                retryable=result.error_class not in ("policy", "validation", "budget"),
+                attempt_number=attempt,
+            )
+            # A failure that the runtime will not retry is escalated rather
+            # than left in the log: it needs a human or a supervisor's
+            # judgement, not another attempt.
+            if result.error_class in ("policy", "budget"):
+                await self._publish(
+                    MessageKind.ESCALATION,
+                    task=task,
+                    attempt=attempt,
+                    recipient=self.supervisor,
+                    reason=result.error or "the attempt failed",
+                    severity="high" if result.error_class == "policy" else "medium",
+                    details=(
+                        f"the {task.role.value} could not complete {task.id!r}: "
+                        f"{result.error}"
+                    ),
+                )
 
         self.log.append(
             EventType.AGENT_FINISHED,
@@ -493,20 +558,50 @@ class WorkerRunner:
 
         return hook
 
-    def _publish_artifact(self, task: TaskSpec, attempt: int, artifact: Any) -> None:
+    async def _publish(
+        self,
+        kind: MessageKind,
+        *,
+        task: TaskSpec,
+        attempt: int,
+        recipient: str,
+        **payload: Any,
+    ) -> Message | None:
+        """Publish a typed message to the bus.
+
+        The message is data, not an instruction: the payload is validated
+        against the schema for its kind, and a message that fails validation
+        is recorded as a failure rather than being smuggled through.
+        """
         if self.bus is None:
-            return
-        message = make_message(
-            MessageKind.ARTIFACT_PUBLISHED,
-            run_id=task.run_id,
-            sender=f"{task.role.value}:{task.id}",
-            recipient=self.supervisor,
-            task_id=task.id,
-            artifact_id=artifact.id,
-            artifact_kind=artifact.kind.value,
-            sha256=artifact.sha256,
-        )
-        self.state.record_message(message)
+            return None
+        try:
+            return await self.bus.publish(
+                make_message(
+                    kind,
+                    run_id=task.run_id,
+                    sender=f"{task.role.value}:{task.id}",
+                    recipient=recipient,
+                    task_id=task.id,
+                    correlation_id=f"{task.id}#{attempt}",
+                    **payload,
+                )
+            )
+        except Exception as exc:
+            # A message failure must not fail the work; it is recorded.
+            self.log.append(
+                EventType.MESSAGE_SENT,
+                run_id=task.run_id,
+                task_id=task.id,
+                attempt=attempt,
+                actor=task.role.value,
+                payload={
+                    "kind": kind.value,
+                    "failed": True,
+                    "error": str(exc),
+                },
+            )
+            return None
 
 
 # Imported lazily to avoid a circular import at module load time.

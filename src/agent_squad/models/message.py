@@ -59,11 +59,18 @@ INFORMATIONAL_KINDS = frozenset({MessageKind.PROGRESS, MessageKind.HANDOFF})
 
 
 class TaskAssignmentPayload(BaseModel):
+    """The supervisor's assignment of a task to a worker.
+
+    The task itself is identified by the message's ``task_id`` field, so
+    the payload does not repeat it; duplicating it would create two
+    sources of truth that could disagree.
+    """
+
     model_config = ConfigDict(extra="forbid")
-    task_id: str
-    attempt: int = Field(default=1, ge=1)
+    attempt_number: int = Field(default=1, ge=1)
     workdir: str | None = None
     base_revision: str | None = None
+    objective: str = ""
 
 
 class ProgressPayload(BaseModel):
@@ -100,7 +107,7 @@ class FailureReportPayload(BaseModel):
     error_class: str
     message: str
     retryable: bool = False
-    attempt: int = Field(default=1, ge=1)
+    attempt_number: int = Field(default=1, ge=1)
 
 
 class RevisionRequestPayload(BaseModel):
@@ -161,7 +168,15 @@ class Message(BaseModel):
 
     id: str = Field(default_factory=message_id)
     kind: MessageKind
-    version: int = Field(default=1, ge=1)
+    version: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "0 means 'unversioned': the bus assigns the next version in the "
+            "conversation.  A positive version is an explicit claim to "
+            "supersede that version, and is rejected if it is not newer."
+        ),
+    )
     run_id: str
     sender: str
     recipient: str
