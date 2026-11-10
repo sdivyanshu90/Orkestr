@@ -757,6 +757,23 @@ LOCAL_SCENARIOS: dict[str, dict[str, Any]] = {
 }
 
 
+def _append_progress(path: Path | None, trial: LocalTrial) -> None:
+    """Append a finished trial to the progress log.
+
+    A long benchmark must not lose its results to an interruption, so every
+    trial is written as it completes, not only at the end.
+    """
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(trial.to_dict(), sort_keys=True) + "\n")
+            handle.flush()
+    except OSError:
+        pass
+
+
 async def run_local_suite(
     *,
     models: list[str] | None = None,
@@ -769,6 +786,7 @@ async def run_local_suite(
     keep_models: bool = False,
     parallel_models: int = 1,
     parallel_runs: int = 1,
+    progress_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run the local-model benchmark.
 
@@ -870,13 +888,15 @@ async def run_local_suite(
 
             async def one(scenario_id: str, strategy: str, trial: int) -> LocalTrial:
                 async with run_semaphore:
-                    return await _run_one(
+                    result = await _run_one(
                         spec=spec,
                         endpoint=endpoint,
                         scenario_id=scenario_id,
                         strategy=strategy,
                         trial=trial,
                     )
+                    _append_progress(progress_path, result)
+                    return result
 
             try:
                 combinations = [
@@ -912,6 +932,7 @@ async def run_local_suite(
         "server_stats": server_stats,
         "trials": [t.to_dict() for t in results],
         "aggregates": aggregates,
+        "progress_path": str(progress_path) if progress_path else None,
         "notes": [
             "The provider is a real, locally served model; the tool loop, the "
             "policy engine and the verification gate are the production ones.",

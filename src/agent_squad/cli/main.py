@@ -450,6 +450,9 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
                 base_url=args.local_base_url or None,
                 parallel_models=args.local_parallel_models,
                 parallel_runs=args.local_parallel_runs,
+                progress_path=(
+                    Path(args.local_progress) if args.local_progress else None
+                ),
             )
         )
         if args.json:
@@ -639,6 +642,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="how many of a model's scenarios to run concurrently",
+    )
+    bench_parser.add_argument(
+        "--local-progress",
+        default=None,
+        help="append each finished trial to this JSONL file as it completes",
     )
 
     return parser

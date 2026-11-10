@@ -263,14 +263,38 @@ For balance, these were checked and did **not** turn up a problem:
 | The integration engine | Detects overlap, staleness and apply conflicts; refuses to guess a resolution. |
 | The verification gate | Re-executes criteria independently; advisory criteria are never reported as passed. |
 | The provider adapters | Verified against a real HTTP server: request shape, header handling, usage decoding, transient-vs-permanent classification. |
-| The message protocol | Nine of the eleven kinds are produced by a real run; the payload schemas reject malformed input. |
+| The message protocol | Eleven of the eleven kinds are produced by a real run; the payload schemas reject malformed input. |
 | The role isolation | The reviewer's tool set contains no write tool, and the capability layer denies writes independently. |
 | The configuration | Every knob has a test proving it changes behaviour. |
 | The artifact store | Content-addressed, integrity-checked, and invalidated when the repository moves on. |
+| The sandbox | The wall-clock timeout genuinely fires and kills the process group; a planted binary in the worktree is refused. |
 
 ---
 
-## 7. Recommended order of work
+## 7. What the local-model experiment changed
+
+Running the orchestrator against eight **real** local models (`docs/local-benchmark-methodology.md`)
+surfaced three defects that the mock provider could never have found, because
+the mock never produces malformed output:
+
+| Defect | What it cost | Fix |
+|---|---|---|
+| A model wrote a tool call as **JSON text** instead of using the structured channel | The tool loop could not start | A strict, counted salvage path in the OpenAI-compatible adapter: only a tool that was actually offered, with object arguments |
+| A model **repeated an action it had already completed** and looped until the iteration limit | A run that had already produced the correct file was recorded as a failure after 119 s | A repeat guard: the repeated call is not executed, and after a bounded number of repeats the attempt ends successfully because the work is done (119 s → 4.7 s) |
+| A model asked for a **`git commit` it did not need** | The approval gate correctly refused it and the run **blocked for 289 s** waiting for a human | The agent prompt now states that committing, pushing and deleting need a human; the benchmark also caps the approval wait so a blocked run fails fast instead of stalling |
+
+And three models produced **plans that failed schema validation** — duplicate
+criterion ids, a criterion with no selector. The planner now disambiguates
+duplicate ids and records an *unexpressible* criterion as an unverifiable
+requirement that the verification gate refuses to pass over.
+
+The general lesson, and the one worth keeping: **a deterministic double
+exercises the paths it was written to reach.** Every one of these defects
+lived past the point where the mock's fidelity stopped.
+
+---
+
+## 8. Recommended order of work
 
 If the next effort is limited, this order maximises the value of the
 research contribution:
