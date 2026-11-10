@@ -14,6 +14,7 @@ resilience.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -26,6 +27,7 @@ from .base import (
     ModelResponse,
     ProviderCapabilities,
     ToolCall,
+    ToolSpec,
     Usage,
 )
 
@@ -50,6 +52,7 @@ class OpenAICompatProvider(BaseProvider):
         max_concurrency: int = 4,
         extra_headers: dict[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
+        salvage_tool_calls: bool = True,
     ) -> None:
         super().__init__(model=model)
         self.base_url = base_url.rstrip("/")
@@ -61,6 +64,84 @@ class OpenAICompatProvider(BaseProvider):
             headers=extra_headers or {},
             limits=httpx.Limits(max_connections=max_concurrency, max_keepalive_connections=max_concurrency),
         )
+        self.salvage_tool_calls = salvage_tool_calls
+        #: How many responses needed the salvage path.  A non-zero count is
+        #: a fact about the model, not a defect, and the benchmark reports it.
+        self.salvaged_calls = 0
+
+    # ------------------------------------------------------- tool salvage
+
+    @staticmethod
+    def _extract_json_objects(text: str) -> list[dict]:
+        """Pull candidate JSON objects out of a model's free text.
+
+        Two shapes are considered: a fenced code block containing JSON, and
+        the whole text if it is itself a JSON object.  Nothing else is
+        considered -- in particular, prose that merely *mentions* JSON is not
+        a candidate.
+        """
+        candidates: list[dict] = []
+        stripped = text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                candidates.append(parsed)
+        for block in re.findall(r"```(?:json|tool_call)?\s*(.*?)```", text, re.DOTALL):
+            block = block.strip()
+            if not block.startswith("{"):
+                continue
+            try:
+                parsed = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                candidates.append(parsed)
+        return candidates
+
+    def _salvage(
+        self, text: str, tools: list[ToolSpec]
+    ) -> list[ToolCall]:
+        """Recover tool calls that a model emitted as plain text.
+
+        Small models frequently render a tool call as a JSON code block in
+        the assistant's content instead of using the structured channel.  The
+        recovery is deliberately strict:
+
+        * the JSON must name a tool that was actually offered;
+        * the arguments must be a JSON object;
+        * nothing is inferred -- a missing field stays missing.
+
+        Anything that fails those checks is left alone, so the model sees its
+        own text and can correct it.  The count of salvaged calls is
+        recorded so that a caller can tell how much of the model's apparent
+        competence came from this path.
+        """
+        if not self.salvage_tool_calls:
+            return []
+        if not tools or not text:
+            return []
+        allowed = {tool.name for tool in tools}
+        salvaged: list[ToolCall] = []
+        for candidate in self._extract_json_objects(text):
+            name = candidate.get("name") or candidate.get("tool") or candidate.get("function")
+            if isinstance(name, dict):
+                name = name.get("name")
+            arguments = candidate.get("arguments")
+            if arguments is None:
+                arguments = candidate.get("parameters")
+            if arguments is None:
+                arguments = candidate.get("args")
+            if not isinstance(name, str) or name not in allowed:
+                continue
+            if arguments is None:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                continue
+            salvaged.append(ToolCall(name=name, arguments=arguments))
+        return salvaged
 
     # ------------------------------------------------------------- encoding
 
@@ -174,9 +255,14 @@ class OpenAICompatProvider(BaseProvider):
             raise ModelError(
                 "model endpoint returned a non-JSON body", provider=self.name
             ) from exc
-        return self._decode(data, elapsed)
+        return self._decode(data, elapsed, request.tools)
 
-    def _decode(self, data: dict[str, Any], elapsed: float) -> ModelResponse:
+    def _decode(
+        self,
+        data: dict[str, Any],
+        elapsed: float,
+        tools: list[ToolSpec] | None = None,
+    ) -> ModelResponse:
         choices = data.get("choices") or []
         if not choices:
             raise ModelError("model response contained no choices", provider=self.name)
@@ -193,6 +279,13 @@ class OpenAICompatProvider(BaseProvider):
             calls.append(
                 ToolCall(id=raw.get("id") or "", name=function.get("name") or "", arguments=arguments)
             )
+        salvaged = False
+        if not calls:
+            recovered = self._salvage(text, tools or [])
+            if recovered:
+                calls = recovered
+                salvaged = True
+                self.salvaged_calls += 1
         raw_usage = data.get("usage") or {}
         usage = Usage(
             input_tokens=int(raw_usage.get("prompt_tokens") or 0),
@@ -202,6 +295,8 @@ class OpenAICompatProvider(BaseProvider):
             ),
             estimated=False,
         )
+        raw = dict(data)
+        raw["salvaged_tool_call"] = salvaged
         return ModelResponse(
             text=text,
             tool_calls=calls,
@@ -210,7 +305,7 @@ class OpenAICompatProvider(BaseProvider):
             provider=self.name,
             latency_s=elapsed,
             finish_reason=str(choices[0].get("finish_reason") or "stop"),
-            raw=data,
+            raw=raw,
         )
 
     async def aclose(self) -> None:

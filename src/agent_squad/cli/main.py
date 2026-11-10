@@ -431,6 +431,33 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 
 def cmd_benchmark(args: argparse.Namespace) -> int:
+    if getattr(args, "local", False):
+        from ..benchmark.local import ServerConfig, run_local_suite
+
+        server_config = ServerConfig(
+            server_path=Path(args.llama_server),
+            context_size=args.local_context,
+            threads=args.local_threads,
+        )
+        result = asyncio.run(
+            run_local_suite(
+                models=args.local_models.split(",") if args.local_models else None,
+                scenarios=args.local_scenarios.split(",") if args.local_scenarios else None,
+                strategies=args.local_strategies.split(",") if args.local_strategies else None,
+                trials=args.trials,
+                model_dir=Path(args.model_dir) if args.model_dir else None,
+                server_config=server_config,
+                base_url=args.local_base_url or None,
+            )
+        )
+        if args.json:
+            _print_json(result)
+            return 0
+        from ..benchmark.local_report import render_local_report
+
+        render_local_report(result)
+        return 0
+
     from ..benchmark.harness import run_suite
 
     result = asyncio.run(
@@ -553,6 +580,52 @@ def build_parser() -> argparse.ArgumentParser:
     bench_parser.add_argument("--strategies", default=None)
     bench_parser.add_argument("--json", action="store_true")
     bench_parser.set_defaults(func=cmd_benchmark)
+
+    # --local switches the benchmark over to real, locally served models.
+    bench_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="benchmark against real local models served by llama.cpp",
+    )
+    bench_parser.add_argument(
+        "--local-models",
+        default=None,
+        help="comma-separated model ids (default: the whole local catalogue)",
+    )
+    bench_parser.add_argument(
+        "--local-scenarios",
+        default=None,
+        help="comma-separated scenario ids for the local suite",
+    )
+    bench_parser.add_argument(
+        "--local-strategies",
+        default=None,
+        help="comma-separated strategies for the local suite",
+    )
+    bench_parser.add_argument(
+        "--llama-server",
+        default=str(
+            Path.home()
+            / ".cache"
+            / "agent-squad-benchmark"
+            / "llamacpp"
+            / "llama-b12246"
+            / "llama-server"
+        ),
+        help="path to the llama-server binary",
+    )
+    bench_parser.add_argument(
+        "--model-dir",
+        default=None,
+        help="directory holding the GGUF weights",
+    )
+    bench_parser.add_argument(
+        "--local-base-url",
+        default=None,
+        help="use an already-running OpenAI-compatible server instead of starting one",
+    )
+    bench_parser.add_argument("--local-context", type=int, default=8192)
+    bench_parser.add_argument("--local-threads", type=int, default=6)
 
     return parser
 

@@ -105,7 +105,7 @@ class PlannedTask(BaseModel):
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
     priority: int = 50
-    complexity: Complexity = Complexity.MEDIUM
+    complexity: Complexity | str = Complexity.MEDIUM
     estimated_duration_s: float = 300.0
     max_attempts: int = 3
     token_budget: int | None = None
@@ -263,6 +263,13 @@ class LLMPlanner(BasePlanner):
     The model's reply is parsed as JSON and validated.  Anything that does
     not validate is a hard failure: the orchestrator never "repairs" a plan by
     guessing what the model probably meant.
+
+    The one exception is *normalisation*: a field whose value is
+    well-formed but out of range -- an unknown ``complexity``, a priority
+    outside 0-100, a non-positive duration -- is corrected to a safe default
+    **and the correction is recorded** in the plan's warnings.  Structural
+    problems (a missing task, a dependency on a task that does not exist, a
+    criterion with no executable kind) are never normalised away.
     """
 
     name = "llm"
@@ -270,8 +277,10 @@ class LLMPlanner(BasePlanner):
     def __init__(self, provider: Any, *, max_tasks: int = 12) -> None:
         self._provider = provider
         self._max_tasks = max_tasks
+        self.warnings: list[str] = []
 
     async def plan(self, request: PlanRequest) -> PlanResult:
+        self.warnings = []
         messages = [
             ChatMessage(
                 role="system",
@@ -282,7 +291,8 @@ class LLMPlanner(BasePlanner):
                     "'kind' is one of file_exists, file_contains, file_not_contains, "
                     "command_exits_zero, command_output_matches, pytest_selector, "
                     "diff_nonempty, diff_empty. Use depends_on only for real data "
-                    "dependencies. Prefer fewer, better-scoped tasks."
+                    "dependencies. Prefer fewer, better-scoped tasks. "
+                    "'complexity' must be one of trivial, low, medium, high."
                 ),
             ),
             ChatMessage(role="user", content=self._user_prompt(request)),
@@ -299,15 +309,52 @@ class LLMPlanner(BasePlanner):
             raise ValidationError(
                 f"planner returned {len(plan.tasks)} tasks, limit is {self._max_tasks}"
             )
+        plan = self._normalise(plan)
         tasks, briefs = self._to_specs(plan, request)
         result = PlanResult(
             tasks=tasks,
             briefs=briefs,
             rationale=list(plan.rationale),
+            warnings=list(self.warnings),
             planner=self.name,
         )
         validate_plan(result)
         return result
+
+    def _normalise(self, plan: LLMPlan) -> LLMPlan:
+        """Correct out-of-range scalar fields and record every correction."""
+        normalised: list[PlannedTask] = []
+        for task in plan.tasks:
+            data = task.model_dump()
+            complexity = data.get("complexity")
+            if complexity is not None and not isinstance(complexity, Complexity):
+                try:
+                    data["complexity"] = Complexity(complexity)
+                except ValueError:
+                    self.warnings.append(
+                        f"task {task.id!r}: complexity {complexity!r} is not a known "
+                        "level; defaulted to 'medium'"
+                    )
+                    data["complexity"] = Complexity.MEDIUM
+            priority = data.get("priority")
+            if not isinstance(priority, int) or not 0 <= priority <= 100:
+                self.warnings.append(
+                    f"task {task.id!r}: priority {priority!r} is out of range; "
+                    "defaulted to 50"
+                )
+                data["priority"] = 50
+            duration = data.get("estimated_duration_s")
+            if not isinstance(duration, (int, float)) or duration <= 0:
+                self.warnings.append(
+                    f"task {task.id!r}: estimated_duration_s {duration!r} is not "
+                    "positive; defaulted to 300"
+                )
+                data["estimated_duration_s"] = 300.0
+            attempts = data.get("max_attempts")
+            if not isinstance(attempts, int) or not 1 <= attempts <= 20:
+                data["max_attempts"] = 3
+            normalised.append(PlannedTask.model_validate(data))
+        return plan.model_copy(update={"tasks": normalised})
 
     def _user_prompt(self, request: PlanRequest) -> str:
         parts = [f"Objective: {request.objective}"]

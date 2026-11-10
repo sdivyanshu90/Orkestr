@@ -22,6 +22,7 @@ in the voice of the operator.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -112,6 +113,7 @@ class AgentLoop:
     tracer: Any = None
     on_approval_state: Any = None
     provider_scope: str = "provider:default"
+    max_repeats: int = 2
 
     async def run(
         self,
@@ -127,6 +129,9 @@ class AgentLoop:
             ChatMessage(role="user", content=prompt),
         ]
         tool_calls_made: list[str] = []
+        successful_calls: dict[str, ToolResult] = {}
+        repeats = 0
+        stop = False
         changed: list[ChangedFile] = []
         total_tokens = 0
         total_cost = 0.0
@@ -211,7 +216,29 @@ class AgentLoop:
                 for call in response.tool_calls:
                     if cancellation is not None and cancellation.is_set():
                         raise CancelledError("worker cancelled", task_id=self.task_id)
-                    result = await self._invoke_tool(call, tool_context, capabilities)
+                    key = _call_key(call)
+                    previous = successful_calls.get(key)
+                    if previous is not None:
+                        # The model is repeating an action that already
+                        # succeeded.  Small models do this when they do not
+                        # recognise that the work is finished.  Re-running it
+                        # would be a no-op at best and a corruption at worst,
+                        # so the call is *not* executed again; the model is
+                        # told what happened and, if it keeps repeating, the
+                        # attempt is ended with the work already done.
+                        repeats += 1
+                        result = ToolResult(
+                            ok=True,
+                            content=(
+                                "This action was already performed successfully "
+                                "with identical arguments; it was not repeated."
+                            ),
+                            data={"repeated": True, **previous.data},
+                        )
+                    else:
+                        result = await self._invoke_tool(call, tool_context, capabilities)
+                        if result.ok:
+                            successful_calls[key] = result
                     tool_calls_made.append(call.name)
                     if self.on_tool_call is not None:
                         await _maybe_await(
@@ -236,6 +263,21 @@ class AgentLoop:
                             name=call.name,
                         )
                     )
+                    if repeats >= self.max_repeats:
+                        # The model has now asked for the same thing twice
+                        # more.  The work it asked for is already done, so
+                        # the attempt ends here rather than burning the rest
+                        # of the iteration budget.
+                        ok = True
+                        last_text = (
+                            f"{last_text}\n\n[the agent stopped after repeating "
+                            f"the same action {repeats} times; the work was "
+                            "already applied]"
+                        ).strip()
+                        stop = True
+                        break
+                if stop:
+                    break
             else:
                 error = f"agent exceeded the iteration limit ({self.max_iterations})"
                 error_class = "budget"
@@ -466,6 +508,15 @@ class AgentLoop:
         from ..providers.registry import compute_cost
 
         return compute_cost(usage, self.config.provider)
+
+
+def _call_key(call: ToolCall) -> str:
+    """A canonical key for a tool call, used to detect repeated actions."""
+    try:
+        arguments = json.dumps(call.arguments, sort_keys=True, default=str)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        arguments = repr(call.arguments)
+    return f"{call.name}:{arguments}"
 
 
 async def _maybe_await(value: Any) -> Any:
