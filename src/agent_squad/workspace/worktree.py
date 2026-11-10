@@ -181,6 +181,18 @@ class WorktreeManager:
         """Stage every change in the worktree (including new files)."""
         git(["add", "-A"], cwd=worktree.path)
 
+    def tree_of(self, revision: str) -> str:
+        """Resolve a revision to its tree id.
+
+        The tree id is content-addressed, so it identifies *what the tree
+        contains* rather than *which commit produced it*.  The integration
+        engine uses it to decide whether a patch applies to the tree it has.
+        """
+        if not revision:
+            return ""
+        proc = git(["rev-parse", f"{revision}^{{tree}}"], cwd=self.repo_path, check=False)
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
     def commit_in_worktree(self, worktree: Worktree, message: str) -> str:
         """Commit everything in the worktree and return the new head sha."""
         git(["add", "-A"], cwd=worktree.path)

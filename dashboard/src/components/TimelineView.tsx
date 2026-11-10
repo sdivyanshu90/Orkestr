@@ -1,7 +1,7 @@
 import { useMemo, type ReactElement } from 'react';
 import type { GraphNode, RunEvent } from '../types';
 import { buildGantt, positionOf, type GanttModel } from '../lib/gantt';
-import { formatClock, formatDuration } from '../lib/format';
+import { formatDuration, formatTick } from '../lib/format';
 
 interface TimelineViewProps {
   events: RunEvent[];
@@ -62,15 +62,20 @@ export default function TimelineView({
       <div className="timeline-axis">
         <div className="timeline-axis-spacer" />
         <div className="timeline-track">
-          {labels.map((stamp, index) => (
-            <span
-              key={stamp}
-              className="timeline-tick"
-              style={{ left: `${(index / (TICKS - 1)) * 100}%` }}
-            >
-              {formatClock(stamp)}
-            </span>
-          ))}
+          {labels.map((stamp, index) => {
+            const isFirst = index === 0;
+            const isLast = index === TICKS - 1;
+            const align = isFirst ? 'translateX(0)' : isLast ? 'translateX(-100%)' : 'translateX(-50%)';
+            return (
+              <span
+                key={stamp}
+                className="timeline-tick"
+                style={{ left: `${(index / (TICKS - 1)) * 100}%`, transform: align }}
+              >
+                {formatTick(stamp, model.max - model.min)}
+              </span>
+            );
+          })}
         </div>
       </div>
 

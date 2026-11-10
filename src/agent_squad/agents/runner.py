@@ -193,7 +193,7 @@ class WorkerRunner:
                 head_revision = self.worktrees.commit_in_worktree(
                     worktree, f"agent-squad: {task.title}"
                 )
-                head_tree = _tree_of(head_revision)
+                head_tree = self.worktrees.tree_of(head_revision)
                 result.head_revision = head_revision
             except Exception:
                 result.head_revision = None
@@ -304,7 +304,7 @@ class WorkerRunner:
         head_revision: str,
         head_tree: str,
     ) -> Any:
-        base_tree = _tree_of(worktree.base_revision)
+        base_tree = self.worktrees.tree_of(worktree.base_revision)
         provenance = build_provenance(
             run_id=task.run_id,
             task_id=task.id,
@@ -520,11 +520,3 @@ def _normalise_status(status: str) -> str:
         "C": "added",
     }
     return mapping.get(status.strip()[:1], "modified")
-
-
-def _tree_of(revision: str) -> str:
-    """Resolve a revision to its tree id (content addressed)."""
-    if not revision:
-        return ""
-    proc = git(["rev-parse", f"{revision}^{{tree}}"], check=False)
-    return proc.stdout.strip() if proc.returncode == 0 else ""

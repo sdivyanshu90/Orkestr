@@ -520,6 +520,40 @@ class StateStore:
                 out.append(artifact)
         return out
 
+    def invalidate_stale_artifacts(
+        self, run_id: str, *, current_revision: str, reason: str = "repository state changed"
+    ) -> list[str]:
+        """Invalidate artifacts whose base revision is no longer the current one.
+
+        An artifact is bound to the tree it was produced against.  When the
+        repository moves on, artifacts computed against the old tree are no
+        longer safe to treat as describing the current state, so they are
+        marked invalid rather than silently reused.
+
+        Returns the ids of the artifacts that were invalidated.
+        """
+        invalidated: list[str] = []
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, provenance, metadata FROM artifacts WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+            for row in rows:
+                provenance = loads(row["provenance"], {})
+                base = provenance.get("base_revision")
+                if not base or base == current_revision:
+                    continue
+                metadata = loads(row["metadata"], {})
+                metadata["invalidated"] = True
+                metadata["invalidated_reason"] = reason
+                metadata["invalidated_against"] = current_revision
+                conn.execute(
+                    "UPDATE artifacts SET metadata = ? WHERE id = ?",
+                    (dumps(metadata), row["id"]),
+                )
+                invalidated.append(row["id"])
+        return invalidated
+
     # -------------------------------------------------------------- messages
 
     def record_message(self, message: Message) -> None:

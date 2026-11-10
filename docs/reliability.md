@@ -18,9 +18,12 @@ There are two candidate sources of truth and only one of them is used.
 - `AgentSquadError.retryable` (`errors.py:67`) is a class attribute. It is
   `True` on `TransientModelError`, `TimeoutError_` and `InfrastructureError`
   and `False` elsewhere. **It is never read by any code in the repository.**
-- The scheduler decides with a hard-coded set of error-class *strings*:
-  `retryable = result.error_class not in ("policy", "validation", "budget")`
-  (`src/agent_squad/scheduler/engine.py:361`).
+- The scheduler decides with a hard-coded set of error-class *strings*.
+  `Scheduler._is_retryable` (`src/agent_squad/scheduler/engine.py:488-502`)
+  treats `"policy"`, `"validation"`, `"budget"` and `"conflict"` as
+  non-retryable, and `"model"`, `"tool"`, `"timeout"`, `"infrastructure"`,
+  `"unknown"` and `""` as retryable. **An error class named in neither list
+  is retried**, so an unrecognised class is treated as transient.
 
 The consequence is concrete: `TransientModelError` and `ModelError` both map
 to `ErrorClass.MODEL` → the string `"model"`, so the scheduler cannot tell a
@@ -35,7 +38,7 @@ decorative.
 | `ValidationError` | `validation` | False | Raised at the point of construction: `models/message.py:make_message` (empty sender/recipient), `models/task.py:assert_transition` (illegal transition), `store/state.py:transition_task` (unknown task), `store/state.py:start_attempt` (attempts exhausted), `dag/graph.py:TaskGraph.add` (duplicate id), `planning/planner.py:validate_plan`, `config.py:load_config` / `build_run_config`, `store/state.py:decide_approval` | **Not retried** (`"validation"` is in the non-retryable set) | `FAILED` (terminal for that attempt; `FAILED → READY` is legal but the scheduler will not take it) |
 | `DependencyError` | `validation` | False | `dag/graph.py:TaskGraph.get`, `dag/graph.py:TaskGraph.validate` (unknown dependency, self-dependency, cycle, delegation-depth violation, unknown parent) | Not retried. Raised **before** the scheduler starts, during planning | No task is created; the run aborts with status `PLANNING` (see §1.3) |
 | `PolicyError` | `policy` | False | Never raised. `PolicyDeniedError` (the only subclass) is defined at `security/policy.py:363` and raised nowhere | Not retried | n/a — the code path is unreachable (§5 of the security document) |
-| `BudgetExceeded` | `budget` | False | `agents/base.py:AgentLoop.run` (lines 170-179) after each model response, when the accumulated tokens or cost exceed the task ceiling. Also `providers/budget.py:BudgetManager.check` — **never instantiated outside its own module** | **Not retried** (`"budget"` is in the non-retryable set) | `FAILED` with `error_class="budget"` (`agents/base.py:226-227`) |
+| `BudgetExceeded` | `budget` | False | `agents/base.py:AgentLoop.run` (lines 146-149) *before* each model call, via `providers/budget.py:BudgetManager.check` on the `task:<id>` and `run` scopes; and (lines 185-195) after each model response, when the accumulated tokens or cost exceed the task ceiling | **Not retried** (`"budget"` is in the non-retryable set) | `FAILED` with `error_class="budget"` (`agents/base.py:241-242`) |
 | `ModelError` | `model` | False | `providers/openai_compat.py:OpenAICompatProvider.complete` (non-408/409/425/429 4xx, non-JSON body, empty `choices`), `providers/anthropic.py:AnthropicProvider.complete` (same), `providers/mock.py:MockProvider.complete`, `replay/recorder.py` | **Retried** — `"model"` is not in the non-retryable set, so a permanent 401 is retried like a 429 | `FAILED` → `READY` → `RUNNING` while attempts remain |
 | `TransientModelError` | `model` | True | `providers/openai_compat.py:complete` (`httpx.TimeoutException`, `httpx.HTTPError`, status 408/409/425/429/5xx), `providers/anthropic.py:complete` (same), `providers/mock.py:complete` (injected failures) | Provider fallback first (`providers/registry.py:ProviderRouter.complete` tries the next provider only for `TransientModelError`), then task-level retry | `FAILED` → `READY` → `RUNNING` while attempts remain |
 | `ToolError` | `tool` | False | `sandbox/limits.py:Sandbox.check_executable` (executable not on the allow-list), `sandbox/limits.py:Sandbox.run` (empty command, missing cwd, spawn failure), `tools/base.py:ToolContext.resolve` (path escapes the workspace), `verification/checks.py:_resolve` | **Retried** (the class says not retryable; the scheduler ignores that) | `FAILED` → `READY` → `RUNNING` while attempts remain |

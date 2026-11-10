@@ -44,6 +44,24 @@ export function formatClock(epochMs: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+/**
+ * Format a timeline tick.  The precision follows the span of the window so
+ * that short runs (which can finish in well under a second) still produce
+ * distinguishable ticks.
+ */
+export function formatTick(epochMs: number, spanMs: number): string {
+  if (!Number.isFinite(epochMs)) return '-';
+  const date = new Date(epochMs);
+  const pad = (n: number, size = 2): string => String(n).padStart(size, '0');
+  if (spanMs < 60_000) {
+    return `${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+  }
+  if (spanMs < 3_600_000) {
+    return `${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+  return formatClock(epochMs);
+}
+
 export function shortHash(sha: string): string {
   if (!sha) return '-';
   return sha.length <= 12 ? sha : `${sha.slice(0, 12)}...`;

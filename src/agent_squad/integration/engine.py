@@ -68,21 +68,15 @@ class IntegrationEngine:
         content, so the commit ids differ while the content is identical.
         """
         stale: list[PatchArtifact] = []
-        current_tree = self._tree_of(base_revision)
+        current_tree = self.worktrees.tree_of(base_revision)
         for patch in patches:
-            expected = patch.base_tree or self._tree_of(patch.base_revision)
+            expected = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
             if expected and current_tree and expected != current_tree:
                 stale.append(patch)
                 continue
             current_tree = patch.head_tree or current_tree
         return stale
 
-    @staticmethod
-    def _tree_of(revision: str) -> str:
-        if not revision:
-            return ""
-        proc = git(["rev-parse", f"{revision}^{{tree}}"], check=False)
-        return proc.stdout.strip() if proc.returncode == 0 else ""
 
     # ---------------------------------------------------------- integration
 
@@ -134,9 +128,9 @@ class IntegrationEngine:
                 )
 
             current_head = base_revision
-            current_tree = self._tree_of(base_revision)
+            current_tree = self.worktrees.tree_of(base_revision)
             for patch in patches:
-                expected_tree = patch.base_tree or self._tree_of(patch.base_revision)
+                expected_tree = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
                 if expected_tree and current_tree and expected_tree != current_tree:
                     result.conflicts.append(
                         ConflictRecord(
@@ -174,7 +168,7 @@ class IntegrationEngine:
                 current_head = self.worktrees.commit_in_worktree(
                     workspace, f"agent-squad: integrate {patch.task_id}"
                 )
-                current_tree = self._tree_of(current_head)
+                current_tree = self.worktrees.tree_of(current_head)
 
             if result.conflicts:
                 result.error = (

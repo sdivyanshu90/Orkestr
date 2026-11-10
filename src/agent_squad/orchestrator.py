@@ -326,6 +326,20 @@ class Orchestrator:
             integration, bundle = await self._integrate(graph, summary)
 
         finished_at = _dt.datetime.now(_dt.UTC)
+        # The repository may have moved on since the artifacts were produced
+        # (for example because the integration committed into a worktree).
+        # Artifacts that no longer describe the current tree are marked
+        # invalid rather than silently reused.
+        if base_revision:
+            invalidated = self.state.invalidate_stale_artifacts(
+                self.config.run_id, current_revision=base_revision
+            )
+            if invalidated:
+                self.log.append(
+                    EventType.ARTIFACT_PUBLISHED,
+                    run_id=self.config.run_id,
+                    payload={"invalidated": invalidated, "reason": "base revision changed"},
+                )
         self.log.append(
             EventType.RUN_COMPLETED,
             run_id=self.config.run_id,
