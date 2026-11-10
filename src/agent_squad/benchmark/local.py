@@ -240,14 +240,23 @@ class ServerConfig:
     server_path: Path = DEFAULT_SERVER
     host: str = "127.0.0.1"
     port: int = 0
-    context_size: int = 8192
+    context_size: int = 4096
     threads: int = 6
+    slots: int = 8
+    """Concurrent request slots per server; more slots means better batching."""
     gpu_layers: int | None = None
     extra_args: tuple[str, ...] = ()
     startup_timeout_s: float = 300.0
     request_timeout_s: float = 600.0
     shared_gpu: int = 1
     """How many models will share the GPU at once."""
+    baseline_vram_mb: int = 0
+    """Free VRAM measured *before* any of this suite's servers started.
+
+    Measuring it once, up front, avoids the planner being fooled by the
+    VRAM that the suite's *own* servers are holding -- which would
+    otherwise shrink every model's layer count as more models load.
+    """
 
     def resolve_port(self) -> int:
         if self.port:
@@ -270,6 +279,8 @@ class ServerHandle:
     gpu_layers: int
     load_seconds: float
     stderr_path: Path | None = None
+    slots: int = 1
+    context_size: int = 0
 
     def stop(self) -> None:
         if self.process.poll() is not None:
@@ -290,6 +301,8 @@ class ServerHandle:
             "port": self.port,
             "gpu_layers": self.gpu_layers,
             "load_seconds": round(self.load_seconds, 2),
+            "slots": self.slots,
+            "context_size": self.context_size,
         }
 
 
@@ -357,6 +370,29 @@ def plan_gpu_layers(
     return max(0, min(layers_total, fit))
 
 
+def plan_server_resources(spec: LocalModelSpec) -> tuple[int, int]:
+    """Choose the server's slot count and total context size.
+
+    llama.cpp divides ``--ctx-size`` across the request slots, so the total
+    has to be ``slots * per_request_context``.  The per-request budget is
+    what actually matters: the agent's prompt is roughly 1.2 k tokens and
+    grows by a few hundred with each tool result.
+
+    The number of slots is a throughput knob -- more slots means more
+    requests can be batched onto the GPU -- but each slot costs KV cache, and
+    the KV cache has to fit next to the weights in 4 GB of VRAM.  Hence
+    fewer slots for larger models.
+    """
+    per_request = 3072
+    if spec.size_mb <= 1600:
+        slots = 8
+    elif spec.size_mb <= 3200:
+        slots = 6
+    else:
+        slots = 3
+    return slots, slots * per_request
+
+
 class LlamaServer:
     """Starts and stops `llama-server` for one model."""
 
@@ -382,9 +418,13 @@ class LlamaServer:
             self.config.gpu_layers
             if self.config.gpu_layers is not None
             else plan_gpu_layers(
-                spec, free_vram_mb(), total_ram_mb(), shared=self.config.shared_gpu
+                spec,
+                self.config.baseline_vram_mb or free_vram_mb(),
+                total_ram_mb(),
+                shared=self.config.shared_gpu,
             )
         )
+        slots, context_size = plan_server_resources(spec)
         args = [
             str(self.config.server_path),
             "--model",
@@ -394,7 +434,7 @@ class LlamaServer:
             "--port",
             str(port),
             "--ctx-size",
-            str(self.config.context_size),
+            str(context_size),
             "--threads",
             str(self.config.threads),
             "--gpu-layers",
@@ -403,6 +443,10 @@ class LlamaServer:
             "--alias",
             spec.id,
             "--no-webui",
+            # More slots means more requests can be batched onto the GPU at
+            # once, which is where the throughput actually comes from.
+            "--parallel",
+            str(slots),
         ]
         args.extend(self.config.extra_args)
 
@@ -434,6 +478,8 @@ class LlamaServer:
             gpu_layers=gpu_layers,
             load_seconds=time.monotonic() - started,
             stderr_path=log_path,
+            slots=slots,
+            context_size=context_size,
         )
 
     def _wait_ready(self, port: int, started: float) -> None:
@@ -746,17 +792,22 @@ async def run_local_suite(
     started_at = time.time()
 
     config = server_config or ServerConfig()
+    # Measure the free VRAM *before* any of this suite's servers start, so
+    # the layer planner is not fooled by the memory our own models hold.
+    baseline_vram = free_vram_mb()
     config = ServerConfig(
         server_path=config.server_path,
         host=config.host,
         port=config.port,
         context_size=config.context_size,
         threads=config.threads,
+        slots=config.slots,
         gpu_layers=config.gpu_layers,
         extra_args=config.extra_args,
         startup_timeout_s=config.startup_timeout_s,
         request_timeout_s=config.request_timeout_s,
         shared_gpu=max(1, parallel_models),
+        baseline_vram_mb=baseline_vram,
     )
 
     model_semaphore = asyncio.Semaphore(max(1, parallel_models))
@@ -811,6 +862,8 @@ async def run_local_suite(
                     "gpu_layers": gpu_layers,
                     "load_seconds": round(load_seconds, 2),
                     "size_mb": spec.size_mb,
+                    "slots": handle.slots if handle else 0,
+                    "context_size": handle.context_size if handle else 0,
                     **stats,
                 }
             )
@@ -910,9 +963,17 @@ async def _run_one(
                 "name": "openai_compat",
                 "model": spec.id,
                 "base_url": endpoint,
+                # A tool call is short.  Letting the model ramble to the full
+                # 4096-token cap costs minutes per run and teaches it
+                # nothing; 512 is enough for a call and its arguments.
+                "max_output_tokens": 512,
             },
             scheduler={"max_workers": STRATEGIES.get(strategy, 2)},
             strategy_override=strategy,
+            roles={
+                role: {"max_iterations": 6}
+                for role in ("implementer", "test_engineer", "reviewer", "supervisor")
+            },
             verification={
                 "integration_test_command": ("python3", "-m", "pytest", "-q")
             },
