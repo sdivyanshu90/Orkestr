@@ -10,6 +10,8 @@ fact), and the accounting path always records whether the number was
 
 from __future__ import annotations
 
+import asyncio
+
 from ..config import ProviderConfig, RunConfig
 from ..errors import ValidationError
 from .anthropic import AnthropicProvider
@@ -66,6 +68,12 @@ class ProviderRouter:
     Fallbacks are only used for *transient* failures.  A permanent error
     (bad request, authentication failure) is surfaced immediately, because
     silently switching providers would hide a misconfiguration.
+
+
+    The router also enforces each provider's declared concurrency limit with
+    a semaphore, so a run with many workers cannot exceed the rate the
+    endpoint is willing to serve.  The limit is per provider, and the
+    fallback providers have their own.
     """
 
     def __init__(self, providers: list[ModelProvider], configs: list[ProviderConfig]) -> None:
@@ -73,6 +81,9 @@ class ProviderRouter:
             raise ValidationError("providers and configs must be the same length")
         self._providers = providers
         self._configs = configs
+        self._semaphores = [
+            asyncio.Semaphore(max(1, config.max_concurrency)) for config in configs
+        ]
 
     @property
     def primary(self) -> ModelProvider:
@@ -82,9 +93,10 @@ class ProviderRouter:
         from ..errors import TransientModelError
 
         last: Exception | None = None
-        for provider in self._providers:
+        for index, provider in enumerate(self._providers):
             try:
-                return await provider.complete(request)  # type: ignore[arg-type]
+                async with self._semaphores[index]:
+                    return await provider.complete(request)  # type: ignore[arg-type]
             except TransientModelError as exc:
                 last = exc
                 continue

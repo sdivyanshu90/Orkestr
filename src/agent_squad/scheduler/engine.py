@@ -41,7 +41,7 @@ from ..dag.graph import TaskGraph
 from ..errors import StaleAttemptError
 from ..models.message import MessageKind, make_message
 from ..models.run import RunStatus, RunSummary
-from ..models.task import TaskSpec, TaskStatus
+from ..models.task import TaskSpec, TaskStatus, utcnow
 from ..planning.brief import TaskBrief
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
@@ -96,6 +96,7 @@ class Scheduler:
     base_revision: str | None = None
     tracer: Any = None
     logger: Any = None
+    _started_at: Any = None
     _task_heads: dict[str, str] = field(default_factory=dict)
     outcomes: dict[str, TaskOutcome] = field(default_factory=dict)
 
@@ -189,6 +190,7 @@ class Scheduler:
     async def run(self) -> RunSummary:
         """Execute the whole graph and return a summary."""
         started = time.monotonic()
+        self._started_at = utcnow()
         completed: set[str] = set()
         failed: set[str] = set()
         blocked: set[str] = set()
@@ -675,5 +677,7 @@ class Scheduler:
             tokens_used=sum(o.tokens_used for o in outcomes.values()),
             cost_usd=round(sum(o.cost_usd for o in outcomes.values()), 8),
             wall_clock_s=time.monotonic() - started,
+            started_at=self._started_at,
+            finished_at=utcnow(),
             verification=levels,
         )
