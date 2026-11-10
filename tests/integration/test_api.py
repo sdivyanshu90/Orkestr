@@ -10,12 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.api.server import create_app
 from agent_squad.config import RunConfig
 from agent_squad.orchestrator import Orchestrator
-
-from helpers import two_independent_spec
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
