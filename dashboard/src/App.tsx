@@ -107,27 +107,69 @@ export default function App(): ReactElement {
   const lastSeqRef = useRef(0);
   const terminalRef = useRef(false);
   const selectedRunIdRef = useRef<string | null>(null);
+  const offlineRef = useRef(false);
 
   selectedRunIdRef.current = selectedRunId;
 
-  const reportError = useCallback((error: unknown, context: string): void => {
-    if (error instanceof ApiError) {
-      if (error.unreachable) {
-        setBackendState('offline');
-        setBanner({
-          kind: 'offline',
-          text: `Backend unreachable (${error.detail}). Start it with "python -m agent_squad.api.server".`,
-        });
+  /**
+   * Mark the backend as unreachable.  The banner is only raised on the
+   * transition so a dismissed message does not come back on every poll.
+   */
+  const markOffline = useCallback((detail: string): void => {
+    const wasOffline = offlineRef.current;
+    offlineRef.current = true;
+    setBackendState('offline');
+    if (!wasOffline) {
+      setBanner({
+        kind: 'offline',
+        text: `Backend unreachable (${detail}). Start it with "python -m agent_squad.api.server".`,
+      });
+    }
+  }, []);
+
+  /**
+   * `/healthz` is the liveness signal.  A dev proxy answers with HTTP 500
+   * when the upstream is gone, so any failure here means the service is not
+   * serving -- not that the request was rejected.
+   */
+  const checkBackend = useCallback(async (): Promise<boolean> => {
+    try {
+      await health();
+      if (offlineRef.current) {
+        offlineRef.current = false;
+        setBanner({ kind: 'info', text: 'Backend is reachable again.' });
+      }
+      setBackendState('online');
+      return true;
+    } catch (error) {
+      const detail =
+        error instanceof ApiError
+          ? error.detail || error.message
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      markOffline(detail);
+      return false;
+    }
+  }, [markOffline]);
+
+  /**
+   * Report a failed request.  The health endpoint is consulted so a dead
+   * backend is shown as "unreachable" rather than as an opaque status code.
+   */
+  const reportError = useCallback(
+    async (error: unknown, context: string): Promise<void> => {
+      if (error instanceof ApiError && error.unreachable) {
+        markOffline(error.detail);
         return;
       }
-      setBanner({ kind: 'error', text: `${context}: ${error.message}` });
-      return;
-    }
-    setBanner({
-      kind: 'error',
-      text: `${context}: ${error instanceof Error ? error.message : String(error)}`,
-    });
-  }, []);
+      const message = error instanceof Error ? error.message : String(error);
+      const alive = await checkBackend();
+      if (!alive) return;
+      setBanner({ kind: 'error', text: `${context}: ${message}` });
+    },
+    [checkBackend, markOffline],
+  );
 
   /* ------------------------------------------------------------- run list */
 
@@ -136,31 +178,24 @@ export default function App(): ReactElement {
       const response = await listRuns();
       setRuns(response.runs);
       setRunsLoading(false);
-      setBackendState('online');
     } catch (error) {
       setRunsLoading(false);
-      reportError(error, 'listing runs');
+      await reportError(error, 'listing runs');
     }
   }, [reportError]);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        await health();
-        setBackendState('online');
-      } catch (error) {
-        reportError(error, 'health check');
-      }
-    })();
+    void checkBackend();
     void refreshRuns();
-  }, [refreshRuns, reportError]);
+  }, [checkBackend, refreshRuns]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
+      void checkBackend();
       void refreshRuns();
     }, RUN_LIST_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [refreshRuns]);
+  }, [checkBackend, refreshRuns]);
 
   /* --------------------------------------------------------- run polling */
 
@@ -182,9 +217,14 @@ export default function App(): ReactElement {
       setLastSeq(runEvents.last_seq);
       setArtifacts(runArtifacts.artifacts);
       setApprovals(runApprovals.approvals);
+      if (offlineRef.current) {
+        offlineRef.current = false;
+        setBackendState('online');
+        setBanner({ kind: 'info', text: 'Backend is reachable again.' });
+      }
       setBackendState('online');
     } catch (error) {
-      reportError(error, `loading run ${runId}`);
+      await reportError(error, `loading run ${runId}`);
     }
   }, [reportError]);
 
@@ -239,7 +279,7 @@ export default function App(): ReactElement {
         const response = await getMessages(selectedRunId);
         if (!cancelled) setMessages(response.messages);
       } catch (error) {
-        if (!cancelled) reportError(error, 'loading messages');
+        if (!cancelled) await reportError(error, 'loading messages');
       } finally {
         if (!cancelled) setMessagesLoading(false);
       }
@@ -272,7 +312,7 @@ export default function App(): ReactElement {
           });
           await refreshRun();
         } catch (error) {
-          reportError(error, `deciding approval ${approvalId}`);
+          await reportError(error, `deciding approval ${approvalId}`);
         } finally {
           setApprovalPending(null);
         }
@@ -294,7 +334,7 @@ export default function App(): ReactElement {
         await refreshRun();
         await refreshRuns();
       } catch (error) {
-        reportError(error, `cancelling run ${selectedRunId}`);
+        await reportError(error, `cancelling run ${selectedRunId}`);
       } finally {
         setCancelling(false);
       }
@@ -327,7 +367,11 @@ export default function App(): ReactElement {
   const polling = selectedRunId !== null && !isTerminalRun(runStatus);
 
   const healthLabel =
-    backendState === 'online' ? 'backend online' : backendState === 'offline' ? 'backend unreachable' : 'checking backend';
+    backendState === 'online'
+      ? 'backend online'
+      : backendState === 'offline'
+        ? 'backend unreachable'
+        : 'checking backend';
 
   const renderTab = (): ReactElement => {
     switch (tab) {
@@ -414,6 +458,7 @@ export default function App(): ReactElement {
             selectedRunId={selectedRunId}
             onSelect={selectRun}
             loading={runsLoading}
+            backendState={backendState}
           />
         </div>
 
@@ -433,7 +478,8 @@ export default function App(): ReactElement {
                 <p className="empty-title">Backend unreachable</p>
                 <p className="muted small">
                   The dashboard cannot reach the agent-squad API. Start the service with{' '}
-                  <code>python -m agent_squad.api.server</code> and reload this page.
+                  <code>python -m agent_squad.api.server</code> and reload this page. The
+                  dashboard retries every few seconds.
                 </p>
               </>
             ) : runs.length === 0 ? (
@@ -466,16 +512,18 @@ export default function App(): ReactElement {
                   ) : null}
                 </div>
                 <div className="run-head-stats">
-                  <span className="small">
-                    tasks {totals.tasks}
-                  </span>
+                  <span className="small">tasks {totals.tasks}</span>
                   <span className="small">tokens {formatNumber(totals.tokens)}</span>
                   <span className="small">cost {formatCost(totals.cost)}</span>
                   <span className="small muted">
                     updated {formatTimestamp(detail?.run.updated_at ?? null)}
                   </span>
                   <span className={`poll-state ${polling ? 'poll-active' : 'poll-idle'}`}>
-                    {polling ? 'polling every 2s' : isTerminalRun(runStatus) ? 'run finished, polling stopped' : 'idle'}
+                    {polling
+                      ? 'polling every 2s'
+                      : isTerminalRun(runStatus)
+                        ? 'run finished, polling stopped'
+                        : 'idle'}
                   </span>
                 </div>
               </div>

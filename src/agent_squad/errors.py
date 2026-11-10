@@ -131,7 +131,7 @@ class CancelledError(AgentSquadError):
     error_class = ErrorClass.CANCELLED
 
 
-class TimeoutError_(AgentSquadError):  # noqa: N801 - deliberate, avoids shadowing builtin
+class TimeoutError_(AgentSquadError):
     error_class = ErrorClass.TIMEOUT
     retryable = True
 

@@ -54,4 +54,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # `(str, Enum)` is deliberate: `str(x)` and `repr(x)` stay stable for log
+    # output and for the on-disk event contract.  `StrEnum` would change both.
+    "UP042",
+]

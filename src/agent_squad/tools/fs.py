@@ -9,7 +9,6 @@ rejected: without that check a repository could ship a symlink pointing at
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from ..errors import ToolError

@@ -215,12 +215,14 @@ class RunConfig(_Base):
 
     @model_validator(mode="after")
     def _validate_overrides(self) -> RunConfig:
-        if self.max_workers_override is not None:
-            if self.max_workers_override > self.strategy.max_workers:
-                raise ValueError(
-                    "max_workers_override exceeds strategy.max_workers "
-                    f"({self.max_workers_override} > {self.strategy.max_workers})"
-                )
+        if (
+            self.max_workers_override is not None
+            and self.max_workers_override > self.strategy.max_workers
+        ):
+            raise ValueError(
+                "max_workers_override exceeds strategy.max_workers "
+                f"({self.max_workers_override} > {self.strategy.max_workers})"
+            )
         return self
 
     def to_dict(self) -> dict[str, Any]:

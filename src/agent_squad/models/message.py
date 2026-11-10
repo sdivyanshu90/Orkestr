@@ -19,7 +19,7 @@ import datetime as _dt
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..errors import ValidationError
 from ..ids import message_id

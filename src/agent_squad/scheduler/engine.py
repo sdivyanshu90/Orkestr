@@ -30,6 +30,7 @@ Consistency guarantees of this local runtime
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,7 +38,7 @@ from typing import Any
 
 from ..config import RunConfig
 from ..dag.graph import TaskGraph
-from ..errors import CancelledError, StaleAttemptError
+from ..errors import StaleAttemptError
 from ..models.run import RunStatus, RunSummary
 from ..models.task import TaskSpec, TaskStatus
 from ..planning.brief import TaskBrief
@@ -286,7 +287,7 @@ class Scheduler:
                     ),
                     timeout=self._timeout_for(task),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
             except asyncio.CancelledError:
                 self._cancel_task(task.id, set())
@@ -297,7 +298,7 @@ class Scheduler:
                 failure_class = "unknown"
 
             if timed_out:
-                try:
+                with contextlib.suppress(StaleAttemptError):
                     self.state.transition_task(
                         task.id,
                         TaskStatus.TIMED_OUT,
@@ -305,8 +306,6 @@ class Scheduler:
                         error_class="timeout",
                         error_message=f"exceeded {self._timeout_for(task):.0f}s deadline",
                     )
-                except StaleAttemptError:
-                    pass
                 if attempts < max_attempts:
                     self.state.transition_task(
                         task.id, TaskStatus.RETRY_SCHEDULED, attempt=attempt
@@ -325,7 +324,7 @@ class Scheduler:
 
             if result is None:
                 # An unexpected exception escaped the worker.
-                try:
+                with contextlib.suppress(StaleAttemptError):
                     self.state.transition_task(
                         task.id,
                         TaskStatus.FAILED,
@@ -333,8 +332,6 @@ class Scheduler:
                         error_class=failure_class,
                         error_message=failure_message,
                     )
-                except StaleAttemptError:
-                    pass
                 if attempts < max_attempts:
                     await asyncio.sleep(self._backoff(attempts, task.id))
                     self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
@@ -349,7 +346,7 @@ class Scheduler:
                 )
 
             if not result.ok:
-                try:
+                with contextlib.suppress(StaleAttemptError):
                     self.state.transition_task(
                         task.id,
                         TaskStatus.FAILED,
@@ -357,8 +354,6 @@ class Scheduler:
                         error_class=result.error_class,
                         error_message=result.error,
                     )
-                except StaleAttemptError:
-                    pass
                 self.log.append(
                     EventType.TASK_ATTEMPT_FINISHED,
                     run_id=self.config.run_id,
@@ -394,7 +389,7 @@ class Scheduler:
                 self._task_heads[task.id] = result.head_revision
             self._dispose_worktree(task, result, report)
             if report is not None and not report.passed:
-                try:
+                with contextlib.suppress(StaleAttemptError):
                     self.state.transition_task(
                         task.id,
                         TaskStatus.FAILED,
@@ -402,8 +397,6 @@ class Scheduler:
                         error_class="verification",
                         error_message=report.error,
                     )
-                except StaleAttemptError:
-                    pass
                 retryable = True
                 if attempts < max_attempts:
                     await asyncio.sleep(self._backoff(attempts, task.id))
@@ -425,10 +418,8 @@ class Scheduler:
                     else None,
                 )
 
-            try:
+            with contextlib.suppress(StaleAttemptError):
                 self.state.transition_task(task.id, TaskStatus.SUCCEEDED, attempt=attempt)
-            except StaleAttemptError:
-                pass
 
             self.log.append(
                 EventType.TASK_ATTEMPT_FINISHED,
@@ -539,10 +530,8 @@ class Scheduler:
         )
 
     def _cancel_task(self, task_id: str, cancelled: set[str]) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.state.transition_task(task_id, TaskStatus.CANCELLED)
-        except Exception:
-            pass
         cancelled.add(task_id)
 
     def _final_status(self, summary: RunSummary) -> RunStatus:

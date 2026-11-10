@@ -13,14 +13,12 @@ and the client polls the run's status.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig
 from ..ids import run_id as new_run_id
 from ..models.run import RunStatus
-from ..models.task import TaskSpec
 from ..orchestrator import Orchestrator
 from ..store.db import Database
 from ..store.events import EventLog
@@ -28,8 +26,7 @@ from ..store.state import StateStore
 
 try:  # pragma: no cover - optional dependency
     from fastapi import FastAPI, HTTPException, Query
-    from fastapi.responses import JSONResponse
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel
 
     FASTAPI_AVAILABLE = True
 except ImportError:  # pragma: no cover

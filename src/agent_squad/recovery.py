@@ -25,15 +25,14 @@ attempt.
 
 from __future__ import annotations
 
-import datetime as _dt
+import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .agents.runner import WorkerRunner
 from .dag.graph import TaskGraph
-from .errors import ValidationError
-from .models.task import TaskSpec, TaskStatus, utcnow
+from .models.task import TaskStatus, utcnow
 from .scheduler.engine import Scheduler
 from .store.db import Database
 from .store.events import EventLog, EventType
@@ -151,15 +150,13 @@ def recover_run(
                     report.actions.append(
                         f"task {task_state.id} exhausted its {max_attempts} attempt(s)"
                     )
-                    try:
+                    with contextlib.suppress(Exception):
                         state.transition_task(
                             task_state.id,
                             TaskStatus.BLOCKED,
                             error_class="recovery",
                             error_message="interrupted with no attempt budget left",
                         )
-                    except Exception:
-                        pass
                     continue
                 try:
                     if task_state.status is not TaskStatus.READY:

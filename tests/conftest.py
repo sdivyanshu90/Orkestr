@@ -9,9 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fixtures.repo import init_repo, sample_spec  # noqa: E402
+from fixtures.repo import init_repo, sample_spec
 
-from agent_squad.config import RunConfig  # noqa: E402
+from agent_squad.config import RunConfig
 
 
 @pytest.fixture()

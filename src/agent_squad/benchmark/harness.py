@@ -24,7 +24,6 @@ harness, and the report format is designed to make it visible.
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 import tempfile
 import time
@@ -210,11 +209,13 @@ def _metrics_from_events(
         elif event.type is EventType.TASK_ATTEMPT_STARTED:
             if int(event.attempt or 0) > 1:
                 metrics.retries += 1
-        elif event.type is EventType.TOOL_DENIED or event.type is EventType.POLICY_DENIED:
+        elif event.type in (EventType.TOOL_DENIED, EventType.POLICY_DENIED):
             metrics.policy_denials += 1
-        elif event.type is EventType.HUMAN_APPROVAL:
-            if event.payload.get("status") in ("requested", "approved", "denied"):
-                metrics.human_interventions += 1
+        elif (
+            event.type is EventType.HUMAN_APPROVAL
+            and event.payload.get("status") in ("requested", "approved", "denied")
+        ):
+            metrics.human_interventions += 1
     total_tokens = reported_tokens + estimated_tokens
     metrics.reported_usage_ratio = (reported_tokens / total_tokens) if total_tokens else 1.0
     # Coordination overhead is approximated by the tokens carried by

@@ -34,7 +34,7 @@ from ..errors import (
     ModelError,
     ToolError,
 )
-from ..models.artifact import ArtifactKind, Provenance
+from ..models.artifact import Provenance
 from ..models.evidence import ChangedFile, EvidencePackage
 from ..models.message import Message, MessageKind, make_message
 from ..providers.base import (
@@ -103,6 +103,8 @@ class AgentLoop:
     cost_limit_usd: float | None = None
     policy: Any = None
     approver: Any = None
+    budget: Any = None
+    budget_scope: str = "run"
     on_model_call: Any = None
     on_tool_call: Any = None
     on_usage: Any = None
@@ -136,6 +138,15 @@ class AgentLoop:
                 if cancellation is not None and cancellation.is_set():
                     raise CancelledError("worker cancelled", task_id=self.task_id)
                 self._enforce_context_budget(messages)
+
+                # Pre-flight budget check: the call is refused *before* it is
+                # issued if the remaining allowance cannot cover it.  The
+                # estimate is the size of the context that would be sent,
+                # which is known at this point.
+                if self.budget is not None:
+                    projected = sum(estimate_tokens(m.content) for m in messages)
+                    for scope in (self.budget_scope, "run"):
+                        self.budget.check(scope, extra_tokens=projected)
 
                 request = ModelRequest(
                     messages=messages,
@@ -482,9 +493,9 @@ def publish_progress(
 
 
 __all__ = [
+    "SYSTEM_PROMPT",
     "AgentLoop",
     "WorkerResult",
-    "SYSTEM_PROMPT",
     "build_provenance",
     "publish_progress",
 ]

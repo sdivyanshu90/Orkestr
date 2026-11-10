@@ -100,7 +100,6 @@ class RecordingProvider:
     async def complete(self, request: ModelRequest) -> ModelResponse:
         response = await self.inner.complete(request)
         index = len(self.exchanges)
-        artifact_id = None
         exchange = Exchange(
             index=index,
             run_id=self.run_id,
@@ -139,7 +138,6 @@ class RecordingProvider:
                 provenance=provenance,
                 metadata={"kind": "model_exchange", "index": index},
             )
-            artifact_id = artifact.id
             exchange.artifact_id = artifact.id
         self.exchanges.append(exchange)
         return response

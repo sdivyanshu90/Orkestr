@@ -7,7 +7,6 @@ idempotent.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import signal
@@ -16,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.config import RunConfig
 from agent_squad.models.task import Budget, TaskSpec, TaskStatus
@@ -29,8 +29,6 @@ from agent_squad.recovery import (
 from agent_squad.store.db import Database
 from agent_squad.store.events import EventLog, EventType
 from agent_squad.store.state import StateStore
-
-from helpers import two_independent_spec
 
 
 def build_run_dir(tmp_path: Path, run_id: str = "r1") -> Path:

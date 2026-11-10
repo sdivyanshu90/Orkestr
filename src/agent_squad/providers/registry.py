@@ -86,7 +86,7 @@ class ProviderRouter:
         from ..errors import TransientModelError
 
         last: Exception | None = None
-        for provider, config in zip(self._providers, self._configs, strict=True):
+        for provider in self._providers:
             try:
                 return await provider.complete(request)  # type: ignore[arg-type]
             except TransientModelError as exc:
@@ -101,11 +101,11 @@ class ProviderRouter:
 
 
 __all__ = [
+    "AnthropicProvider",
     "BaseProvider",
     "MockProvider",
     "ModelProvider",
     "OpenAICompatProvider",
-    "AnthropicProvider",
     "ProviderRouter",
     "Usage",
     "build_provider",

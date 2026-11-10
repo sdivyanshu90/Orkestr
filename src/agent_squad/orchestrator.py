@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
-import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,14 +26,12 @@ from .agents.runner import WorkerRunner
 from .artifacts.store import ArtifactStore
 from .config import RunConfig
 from .dag.graph import TaskGraph
-from .errors import AgentSquadError, ValidationError
 from .integration.engine import IntegrationEngine
 from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
-from .models.run import RunStatus, RunSummary, StrategyDecision, StrategyName
-from .models.task import TaskSpec, TaskStatus
-from .planning.brief import TaskBrief
-from .planning.inspector import RepoContext, RepositoryInspector
+from .models.run import RunStatus, RunSummary, StrategyDecision
+from .models.task import TaskStatus
+from .planning.inspector import RepositoryInspector
 from .planning.planner import PlanRequest, PlanResult, build_planner
 from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
@@ -204,7 +200,6 @@ class Orchestrator:
         cancellation: asyncio.Event | None = None,
     ) -> RunOutcome:
         """Execute a complete orchestration session."""
-        started = time.monotonic()
         started_at = _dt.datetime.now(_dt.UTC)
         warnings: list[str] = []
 

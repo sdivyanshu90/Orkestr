@@ -20,13 +20,11 @@ call, and ``unavailable=True`` simulates an endpoint that is down.
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 from ..errors import ModelError, TransientModelError
 from .base import (
     BaseProvider,
-    ChatMessage,
     ModelRequest,
     ModelResponse,
     ProviderCapabilities,

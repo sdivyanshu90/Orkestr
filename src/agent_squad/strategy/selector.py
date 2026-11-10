@@ -91,7 +91,6 @@ class StrategySelector:
         # --- candidate comparison ------------------------------------------
         candidates = self._candidates(width)
         serial_time = model.total_duration_s
-        serial_cost = self._cost(model.task_count, price_per_1k_tokens)
 
         scored: list[tuple[float, int, float, int]] = []
         for workers in candidates:
@@ -178,10 +177,6 @@ class StrategySelector:
         base = 1200 * task_count
         overhead = 600 * max(0, workers - 1)
         return int(base + overhead)
-
-    @staticmethod
-    def _cost(task_count: int, price_per_1k_tokens: float) -> float:
-        return round(task_count * 1200 / 1000.0 * price_per_1k_tokens, 6)
 
     def _decision(
         self,

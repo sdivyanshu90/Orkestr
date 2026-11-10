@@ -12,6 +12,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.config import RunConfig
 from agent_squad.errors import StaleAttemptError
@@ -20,8 +21,6 @@ from agent_squad.orchestrator import Orchestrator
 from agent_squad.store.db import Database
 from agent_squad.store.events import EventLog
 from agent_squad.store.state import StateStore
-
-from helpers import two_independent_spec
 
 
 @pytest.mark.integration
@@ -49,7 +48,6 @@ async def test_independent_tasks_run_in_parallel(tmp_path: Path, repo: Path) -> 
     assert len(starts) == 2
     assert len(finishes) == 2
     second_start = starts[1] if starts[0].seq < starts[1].seq else starts[0]
-    first_start = starts[0] if starts[0].seq < starts[1].seq else starts[1]
     # The second worker must start before the first one finishes.
     finishes_after_second = [e for e in finishes if e.seq > second_start.seq]
     assert finishes_after_second, "the second worker never started before the first finished"

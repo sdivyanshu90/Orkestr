@@ -17,25 +17,24 @@ verification gate decides what that means.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..artifacts.store import ArtifactStore
 from ..config import RunConfig
-from ..errors import CancelledError, ToolError
 from ..models.artifact import ArtifactKind
-from ..models.evidence import ChangedFile, CheckRecord, EvidencePackage, Limitation
+from ..models.evidence import ChangedFile, EvidencePackage, Limitation
 from ..models.message import MessageKind, make_message
-from ..models.task import ADVISORY_CHECKS, CheckKind, Role, TaskSpec, TaskStatus
+from ..models.task import ADVISORY_CHECKS, Role, TaskSpec
 from ..planning.brief import TaskBrief
-from ..security.capabilities import CapabilitySet, capabilities_for_role
+from ..security.capabilities import capabilities_for_role
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 from ..tools.base import ToolContext, ToolRegistry
 from ..tools.exec import GitDiffTool, GitStatusTool, RunCommandTool
 from ..tools.fs import ListDirTool, ReadFileTool, WriteFileTool
-from ..workspace.worktree import WorktreeManager, Worktree, git
+from ..workspace.worktree import Worktree, WorktreeManager, git
 from .base import AgentLoop, WorkerResult, build_provenance
 from .messaging import MessageBus
 
@@ -114,6 +113,12 @@ class WorkerRunner:
         )
 
         capabilities = capabilities_for_role(task.role)
+        if self.budget is not None:
+            self.budget.set_scope_limits(
+                f"task:{task.id}",
+                token_limit=task.budget.max_tokens,
+                cost_limit_usd=task.budget.max_cost_usd,
+            )
         tool_context = ToolContext(
             run_id=task.run_id,
             task_id=task.id,
@@ -146,6 +151,8 @@ class WorkerRunner:
             policy=self.policy,
             approver=self.approver,
             on_policy_decision=self._policy_hook(task, attempt),
+            budget=self.budget,
+            budget_scope=f"task:{task.id}",
         )
 
         try:

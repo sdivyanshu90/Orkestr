@@ -6,7 +6,6 @@ repository or a tool tries to subvert the runtime.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -15,17 +14,15 @@ from agent_squad.config import SandboxConfig
 from agent_squad.errors import ToolError
 from agent_squad.models.task import Role
 from agent_squad.sandbox.limits import Sandbox
-from agent_squad.security.capabilities import Capability, capabilities_for_role
+from agent_squad.security.capabilities import capabilities_for_role
 from agent_squad.security.injection import (
-    InjectionCategory,
     redact_secrets,
     scan_for_injection,
     wrap_untrusted,
 )
 from agent_squad.tools.base import ToolContext, ToolRegistry
-from agent_squad.tools.fs import ReadFileTool, WriteFileTool
 from agent_squad.tools.exec import RunCommandTool
-
+from agent_squad.tools.fs import ReadFileTool, WriteFileTool
 
 # ------------------------------------------------------------------ sandbox
 
@@ -212,7 +209,7 @@ async def test_the_policy_engine_gates_tool_invocation(tmp_path: Path) -> None:
     from agent_squad.agents.base import AgentLoop
     from agent_squad.config import RunConfig
     from agent_squad.models.task import Role
-    from agent_squad.providers.base import ChatMessage, ModelRequest, ModelResponse, ToolCall
+    from agent_squad.providers.base import ModelRequest, ModelResponse, ToolCall
     from agent_squad.providers.mock import MockProvider
     from agent_squad.security.policy import PolicyEngine
 

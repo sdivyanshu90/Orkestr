@@ -12,9 +12,10 @@ the benchmark harness read to reconstruct the shape of an execution.
 from __future__ import annotations
 
 import time
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
 
 from ..models.task import utcnow
 
@@ -187,10 +188,8 @@ class Tracer:
         finally:
             self.recorder.pop()
             if otel_ctx is not None:  # pragma: no cover
-                try:
+                with suppress(Exception):
                     otel_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
 
     def event(self, span: Span, name: str, **attributes: Any) -> None:
         span.events.append({"name": name, "at": utcnow().isoformat(), **attributes})

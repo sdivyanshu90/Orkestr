@@ -7,7 +7,6 @@ harness's assumptions, and that a negative result is representable.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -110,12 +109,13 @@ async def test_the_suite_runs_and_reports_for_every_strategy(tmp_path: Path) -> 
     )
     assert report["trial_count"] == 4
     assert set(report["aggregates"]) == {"single", "static_two"}
-    for name, aggregate in report["aggregates"].items():
+    for aggregate in report["aggregates"].values():
         assert aggregate["trials"] == 2
         assert "verified_completion_rate" in aggregate["mean"]
     assert report["comparisons"]
     for trial in report["trials"]:
         assert trial["error"] is None
+    assert all(t["metrics"]["total_tasks"] > 0 for t in report["trials"])
 
 
 @pytest.mark.slow

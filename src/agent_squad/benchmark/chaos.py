@@ -44,7 +44,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from ..errors import ModelError, TransientModelError
 from ..providers.base import ModelRequest, ModelResponse

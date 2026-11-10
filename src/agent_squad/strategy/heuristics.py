@@ -43,6 +43,8 @@ class CoordinationModel:
 
     config: StrategyConfig
     estimates: list[TaskEstimate] = field(default_factory=list)
+    critical_path_duration_s: float = 0.0
+    parallel_width: int = 1
 
     # ----------------------------------------------------------- structure
 
@@ -65,7 +67,13 @@ class CoordinationModel:
             )
             for task in graph.tasks.values()
         ]
-        return cls(config=config, estimates=estimates)
+        _, critical_duration = graph.critical_path()
+        return cls(
+            config=config,
+            estimates=estimates,
+            critical_path_duration_s=critical_duration,
+            parallel_width=graph.parallel_width(),
+        )
 
     # ------------------------------------------------------------- numbers
 
@@ -131,11 +139,9 @@ class CoordinationModel:
         serial = self.total_duration_s
         if serial <= 0:
             return 1.0
-        levels = self._levels_hint(width)
-        critical = self._critical_path_estimate()
-        serial_fraction = min(1.0, critical / serial) if serial else 1.0
-        parallel_fraction = 1.0 - serial_fraction
-        effective_workers = max(1, min(workers, width))
+        serial_fraction = min(1.0, self.critical_path_duration_s / serial) if serial else 1.0
+        parallel_fraction = max(0.0, 1.0 - serial_fraction)
+        effective_workers = max(1, min(workers, max(1, width)))
         # Sub-linear scaling: real coordination costs grow faster than the
         # ideal Amdahl curve.
         raw = 1.0 / (serial_fraction + parallel_fraction / effective_workers)
@@ -144,21 +150,6 @@ class CoordinationModel:
         )
         overhead_penalty = 1.0 - min(0.5, self.integration_risk() * 0.5)
         return round(max(1.0, raw * overhead_penalty), 4)
-
-    def _levels_hint(self, width: int) -> int:
-        return max(1, width)
-
-    def _critical_path_estimate(self) -> float:
-        if not self.estimates:
-            return 0.0
-        by_id = {e.task_id: e for e in self.estimates}
-        best = 0.0
-        for estimate in self.estimates:
-            # Approximate: a task's serial contribution is its own duration
-            # plus the longest dependency chain above it.
-            chain = estimate.duration_s
-            best = max(best, chain)
-        return min(best, self.total_duration_s)
 
     def estimated_wall_time(self, workers: int, width: int) -> float:
         """Estimated wall-clock seconds for ``workers`` workers."""

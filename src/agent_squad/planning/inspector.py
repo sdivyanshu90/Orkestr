@@ -187,10 +187,8 @@ class RepositoryInspector:
     def _include(self, path: Path) -> bool:
         if any(part in DEFAULT_IGNORE_DIRS for part in path.parts):
             return False
-        if path.is_symlink():
-            # Symlinks can point anywhere; the inspector does not follow them.
-            return False
-        return True
+        # Symlinks can point anywhere; the inspector does not follow them.
+        return not path.is_symlink()
 
     def _head_revision(self) -> str:
         from ..workspace.worktree import git

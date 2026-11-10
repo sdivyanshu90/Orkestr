@@ -7,8 +7,6 @@ the test-suite use exactly the same repositories and requests.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from agent_squad.benchmark.repo_fixture import (
     BASIC_TEST,
     CALC_SOURCE,

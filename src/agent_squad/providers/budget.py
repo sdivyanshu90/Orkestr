@@ -14,7 +14,7 @@ on a guess made before the call.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..config import BudgetConfig, ProviderConfig
 from ..errors import BudgetExceeded

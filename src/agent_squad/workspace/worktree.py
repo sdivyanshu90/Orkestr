@@ -42,7 +42,7 @@ def git(
     full_env = dict(os.environ)
     if env:
         full_env.update(env)
-    proc = subprocess.run(  # noqa: S603 - fixed executable, argument list form
+    proc = subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd else None,
         capture_output=True,

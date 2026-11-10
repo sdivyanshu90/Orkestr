@@ -24,6 +24,7 @@ See ``docs/security-threat-model.md``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import resource
 import shutil
@@ -68,7 +69,7 @@ class CommandResult:
         }
 
 
-def _preexec(cpu_time: int, memory_mb: int, max_file_mb: int):  # noqa: ANN202
+def _preexec(cpu_time: int, memory_mb: int, max_file_mb: int):
     """Build the ``preexec_fn`` that applies rlimits in the child process.
 
     ``RLIMIT_NPROC`` is deliberately *not* set: on Linux it counts the
@@ -80,18 +81,12 @@ def _preexec(cpu_time: int, memory_mb: int, max_file_mb: int):  # noqa: ANN202
         os.setsid()
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_time, cpu_time))
         mem_bytes = memory_mb * 1024 * 1024
-        try:
+        with contextlib.suppress(ValueError, OSError):
             resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        except (ValueError, OSError):
-            pass
-        try:
+        with contextlib.suppress(ValueError, OSError):
             resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_mb * 1024 * 1024,) * 2)
-        except (ValueError, OSError):
-            pass
-        try:
+        with contextlib.suppress(ValueError, OSError):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        except (ValueError, OSError):
-            pass
 
     return _apply
 
@@ -236,20 +231,16 @@ class Sandbox:
                 proc.communicate(input=stdin.encode() if stdin is not None else None),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
             stdout_b, stderr_b = b"", b""
             try:
                 os.killpg(proc.pid, 9)
             except (ProcessLookupError, PermissionError, OSError):
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
-            try:
+            with contextlib.suppress(TimeoutError, ValueError):
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=5)
-            except (asyncio.TimeoutError, ValueError):
-                pass
 
         duration = time.monotonic() - started
         stdout_text, stdout_truncated = self._cap(stdout_b)
@@ -284,7 +275,7 @@ class Sandbox:
             return None
         try:
             await asyncio.wait_for(proc.communicate(), timeout=5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         return proc.returncode == 0
 

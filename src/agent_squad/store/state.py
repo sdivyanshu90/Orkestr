@@ -27,7 +27,7 @@ from ..models.message import Message
 from ..models.run import RunStatus
 from ..models.task import TaskSpec, TaskState, TaskStatus, assert_transition, utcnow
 from .db import Database, dumps, loads
-from .events import Event, EventLog, EventType
+from .events import EventLog, EventType
 
 
 class StateStore:

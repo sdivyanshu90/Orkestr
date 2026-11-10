@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from agent_squad.dag.graph import TaskGraph
-from agent_squad.errors import DependencyError
+from agent_squad.errors import DependencyError, ValidationError
 from agent_squad.models.task import (
     AcceptanceCriterion,
     CheckKind,
@@ -58,7 +59,7 @@ def test_dag_rejects_unknown_dependency() -> None:
 def test_dag_rejects_self_dependency() -> None:
     # The task specification refuses a self-dependency at construction time,
     # before the graph ever sees it.
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(PydanticValidationError) as exc:
         make_task("a", depends_on=("a",))
     assert "depend on itself" in str(exc.value)
 
@@ -102,7 +103,7 @@ def test_dag_warns_about_advisory_only_tasks() -> None:
 def test_dag_rejects_duplicate_task_ids() -> None:
     graph = TaskGraph()
     graph.add(make_task("a"))
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         graph.add(make_task("a"))
 
 
@@ -215,7 +216,7 @@ def test_task_spec_rejects_duplicate_criteria() -> None:
     criterion = AcceptanceCriterion(
         id="c", description="d", kind=CheckKind.FILE_EXISTS, spec={"path": "x"}
     )
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         TaskSpec(
             id="t",
             run_id="r",
@@ -226,12 +227,12 @@ def test_task_spec_rejects_duplicate_criteria() -> None:
 
 
 def test_criterion_requires_the_spec_keys_for_its_kind() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         AcceptanceCriterion(id="c", description="d", kind=CheckKind.FILE_EXISTS, spec={})
 
 
 def test_criterion_rejects_an_empty_command() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         AcceptanceCriterion(
             id="c",
             description="d",

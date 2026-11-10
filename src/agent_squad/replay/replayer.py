@@ -198,7 +198,6 @@ def _execute_replay(
     provider = RecordedProvider(exchanges)
     orchestrator = Orchestrator(config, data_dir=root.parent.parent, provider=provider)
     try:
-        from ..models.run import RunStatus
 
         outcome = orchestrator.run(
             "replay", description="control-plane replay", integrate=False
@@ -226,4 +225,6 @@ def await_close(orchestrator: Any) -> None:
     except RuntimeError:
         asyncio.run(orchestrator.aclose())
         return
-    loop.create_task(orchestrator.aclose())
+    # The reference is kept so the task is not garbage collected mid-flight.
+    closer = loop.create_task(orchestrator.aclose())
+    closer.add_done_callback(lambda _t: None)

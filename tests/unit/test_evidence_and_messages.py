@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from agent_squad.errors import ValidationError
 from agent_squad.models.evidence import (
@@ -17,7 +18,6 @@ from agent_squad.models.message import (
     make_message,
 )
 from agent_squad.models.run import VerificationLevel
-
 
 # ----------------------------------------------------------------- evidence
 
@@ -73,7 +73,7 @@ def test_the_strongest_state_wins() -> None:
 
 
 def test_evidence_rejects_a_check_for_an_unknown_criterion() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         EvidencePackage(
             run_id="r",
             task_id="t",
@@ -84,7 +84,7 @@ def test_evidence_rejects_a_check_for_an_unknown_criterion() -> None:
 
 
 def test_evidence_requires_a_hash_with_an_artifact_id() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         EvidencePackage(
             run_id="r",
             task_id="t",
@@ -116,7 +116,7 @@ def test_limitations_are_recorded_explicitly() -> None:
 
 
 def test_message_payload_is_validated_against_its_kind() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         Message(
             kind=MessageKind.ARTIFACT_PUBLISHED,
             run_id="r",

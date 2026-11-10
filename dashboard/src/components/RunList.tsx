@@ -8,6 +8,7 @@ interface RunListProps {
   selectedRunId: string | null;
   onSelect: (runId: string) => void;
   loading: boolean;
+  backendState: 'unknown' | 'online' | 'offline';
 }
 
 export default function RunList({
@@ -15,7 +16,20 @@ export default function RunList({
   selectedRunId,
   onSelect,
   loading,
+  backendState,
 }: RunListProps): ReactElement {
+  if (backendState === 'offline') {
+    return (
+      <div className="empty">
+        <p className="empty-title text-error">Backend unreachable</p>
+        <p className="muted small">
+          The agent-squad API is not answering. Start it with{' '}
+          <code>python -m agent_squad.api.server</code>. The dashboard retries automatically.
+        </p>
+      </div>
+    );
+  }
+
   if (loading && runs.length === 0) {
     return <p className="muted small">loading runs...</p>;
   }

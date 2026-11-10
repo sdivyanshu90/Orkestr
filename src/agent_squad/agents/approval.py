@@ -36,6 +36,7 @@ class ApprovalBroker:
     poll_interval_s: float = 0.2
     auto_approve: bool = False
     requested: list[str] = field(default_factory=list)
+    _message_failures: int = 0
 
     async def request(
         self,
@@ -88,7 +89,7 @@ class ApprovalBroker:
             except Exception:
                 # A message failure must not prevent the approval request from
                 # being recorded; the durable record is the authority.
-                pass
+                self._message_failures += 1
 
         deadline = time.monotonic() + self.config.approval_timeout_s
         while time.monotonic() < deadline:

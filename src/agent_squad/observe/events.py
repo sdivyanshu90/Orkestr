@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, TextIO
+from typing import Any, ClassVar, TextIO
 
 from ..models.task import utcnow
 
@@ -33,7 +33,12 @@ class StructuredLogger:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _context: dict[str, Any] = field(default_factory=dict)
 
-    LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+    LEVELS: ClassVar[dict[str, int]] = {
+        "DEBUG": 10,
+        "INFO": 20,
+        "WARNING": 30,
+        "ERROR": 40,
+    }
 
     def bind(self, **context: Any) -> StructuredLogger:
         child = StructuredLogger(

@@ -9,7 +9,7 @@ stated explicitly rather than implied.
 
 `agent-squad` is a local-first, single-process orchestration runtime for
 multi-agent software engineering. One process (`Orchestrator`,
-`src/agent_squad/orchestrator.py:112`) drives a DAG of tasks.
+`src/agent_squad/orchestrator.py:111`) drives a DAG of tasks.
 
 For each task the runtime:
 
@@ -72,11 +72,18 @@ and the code says so in its own docstrings.
    dropped capabilities. The allow-list is defeated by `sh`, `bash` and
    `python3`, all of which are in the default allow-list
    (`src/agent_squad/config.py:74-90`).
-4. **The capability layer is not enforced on the tool-execution path.**
-   `src/agent_squad/security/policy.py:PolicyEngine.authorize` is a complete
-   implementation, but nothing in the runtime calls it. See §9.
-5. **Human approval is not enforced.** No tool invocation in the current
-   runtime requires a human decision. See §8.
+4. **The capability layer is coarse and largely redundant.**
+   `src/agent_squad/security/policy.py:PolicyEngine.authorize` is now
+   called on the tool path (`agents/base.py:AgentLoop._invoke_tool`), so the
+   engine is no longer inert. What it buys today is small: the capability
+   sets it checks are granted per role, and the tool registry already
+   withholds the tools whose capabilities a role lacks. See §9.
+5. **Human approval reaches exactly one action.** A `run_command` whose
+   argv is `git push` or `git commit` is routed to the approval broker and
+   blocks until a human decides. The four tools the policy table marks as
+   approval-gated (`commit_changes`, `push_changes`, `delete_path`,
+   `http_request`) are still not registered, so a model cannot name them.
+   See §8.
 6. **A compromised model provider.** The provider sees the full transcript and
    can steer every subsequent tool call.
 7. **A compromised Python dependency.** Dependencies execute inside the
@@ -101,14 +108,14 @@ and the code says so in its own docstrings.
 
 | # | Boundary | Location | What crosses it | Trust assumption | Mechanism | Enforcement status |
 | --- | --- | --- | --- | --- | --- | --- |
-| B1 | Model → tool invocation | `agents/base.py:AgentLoop._invoke_tool` | Tool name and arguments | Untrusted | Registry membership check; `tools/base.py:ToolContext.resolve` path containment | **Partial.** Only registered tools can be called; the capability and scope checks in `PolicyEngine` are not consulted. |
+| B1 | Model → tool invocation | `agents/base.py:AgentLoop._invoke_tool` | Tool name and arguments | Untrusted | Registry membership check; `PolicyEngine.authorize` (capability → scope → approval); `tools/base.py:ToolContext.resolve` path containment | **Partial.** Only registered tools can be called, and `authorize` now runs before every invocation — but the capability sets it checks are, today, a subset of what the registry already enforces. |
 | B2 | Repository content → agent context | `agents/base.py:AgentLoop._render_tool_result` → `security/injection.py:wrap_untrusted` | File contents, command output | Untrusted | Delimiter labelling plus `UNTRUSTED_PREAMBLE`; `security/injection.py:scan_for_injection` used only by `planning/inspector.py:RepositoryInspector._scan` | **Signal only.** Labelling is not sanitisation; tool output is not scanned at all. |
 | B3 | Orchestrator → sandboxed process | `sandbox/limits.py:Sandbox.run` | argv, cwd, a stripped environment | Partially trusted (may be hostile repo code) | Executable allow-list (`Sandbox.check_executable`), `RLIMIT_CPU/AS/FSIZE/CORE`, env stripping (`build_environment`), wall-clock timeout, optional `unshare --net` | **Active but weak.** `sh`, `bash` and `python3` are allow-listed, so arbitrary code runs with the user's privileges. |
 | B4 | Agent → git | `tools/exec.py:_git` (sandboxed) and `workspace/worktree.py:git` (not sandboxed, full env) | Commit, diff, status, worktree administration | Trusted tooling | Capability `EXEC_GIT`; `git` is on the allow-list | **Not a boundary.** `git` runs repository-controlled configuration and hooks. |
-| B5 | Agent → filesystem outside the worktree | `tools/base.py:ToolContext.resolve` | Read/write/delete paths | Confined by design | `resolve()` refuses paths whose resolved form escapes `scope_root`; `tools/fs.py:ReadFileTool.invoke` refuses to read through an escaping symlink | **Enforced for the fs tools only.** `run_command` is unconfined; `ToolContext.scope_patterns` (the task's `exclude_paths`) is never read by any tool. |
-| B6 | Agent → network | `sandbox/limits.py:Sandbox.run` (`_probe_unshare`) | Outbound sockets | Restricted by default | `SandboxConfig.allow_network = False`; `unshare --net` probe; `no_proxy=*` | **Conditional.** On a host where `unshare --net` is not permitted the command runs with full egress and only an in-memory `isolation_note` records it. |
+| B5 | Agent → filesystem outside the worktree | `tools/base.py:ToolContext.resolve`, `security/policy.py:PolicyEngine._check_path` | Read/write/delete paths | Confined by design | `resolve()` refuses paths whose resolved form escapes `scope_root`; `tools/fs.py:ReadFileTool.invoke` refuses to read through an escaping symlink; `_check_path` applies the task's `exclude_paths` and the configured `protected_paths` | **Enforced for the fs tools only.** `run_command` is unconfined. `ToolContext.scope_patterns` is now read — `agents/base.py:AgentLoop._invoke_tool` passes it to `authorize(scope_patterns=...)` — but it reaches only the path-scoped fs tools. |
+| B6 | Agent → network | `sandbox/limits.py:Sandbox.run` (`_probe_unshare`) | Outbound sockets | Restricted by default | `SandboxConfig.allow_network = False`; `unshare --net` probe; `no_proxy=*` | **Conditional.** On a host where `unshare --net` is not permitted the command runs with full egress; the `isolation_note` records this in `ToolResult.data` (`tools/exec.py:RunCommandTool.invoke`), but it is not written to the event log and is not shown to the model. |
 | B7 | Agent → inter-agent messages | `models/message.py:Message._validate_payload`, `agents/messaging.py:MessageBus._validate` | Typed payloads | Untrusted | Discriminated-union payload validation; unknown sender/recipient rejection; duplicate id and stale version rejection | **Enforced in-process.** The duplicate-id and version tables are in-memory and do not survive a restart. |
-| B8 | Approval authority → runtime | `security/policy.py:PolicyEngine.authorize(approved=...)`, `store/state.py:StateStore.decide_approval` | A boolean | Trusted human | `ApprovalConfig` toggles; `approvals` table with `pending`/`approved`/`denied` | **Not wired.** `authorize` is never called; `create_approval` is never called. |
+| B8 | Approval authority → runtime | `security/policy.py:PolicyEngine.authorize(approved=...)`, `agents/approval.py:ApprovalBroker.request`, `store/state.py:StateStore.decide_approval` | A boolean | Trusted human | `ApprovalConfig` toggles; `approvals` table with `pending`/`approved`/`denied` | **Wired, narrowly.** `authorize` is called from `agents/base.py:AgentLoop._invoke_tool` and a `REQUIRE_APPROVAL` decision is routed to `ApprovalBroker.request`, which creates the approval row and polls for a decision. The reachable action is `run_command` with `git push` or `git commit`; the approval is still an unbound boolean, not bound to a specific action or argument set. |
 | B9 | Orchestrator → store | `store/db.py:Database.transaction` | SQL, event payloads | Trusted component | Single SQLite connection, `BEGIN IMMEDIATE`, process-wide `threading.RLock` | **Active.** One writer at a time. |
 | B10 | Run directory → operator / other local users | `orchestrator.py:Orchestrator.__init__` | `state.db`, `run-config.json`, artifacts | Trusted | Filesystem permissions only | **Weak.** No encryption, no signing, no `os.chmod` hardening; the DB holds the run configuration and the whole event log. |
 | B11 | Orchestrator → model provider | `providers/openai_compat.py:OpenAICompatProvider.complete` | Full conversation, API key | Trusted third party | HTTPS | **None beyond TLS.** There is no egress allow-list, no request-body redaction, and no provider authentication beyond the bearer token. |
@@ -290,31 +297,47 @@ loss, exfiltration through the model provider.
 - `tools/base.py:ToolContext.resolve` — path containment rooted at
   `scope_root`.
 - `security/policy.py:PolicyEngine._check_path` — scope exclusion patterns
-  and protected paths (not currently reachable, see §9).
+  and protected paths. Reachable since `authorize` moved onto the tool
+  path; it applies to the path-scoped fs tools only.
 
 **Residual risk.**
 
-- The capability table is **declarative in the current runtime**.
-  `AgentLoop._invoke_tool` receives a `capabilities` argument and does not
-  use it; `ToolContext.capabilities` is set by the runner and read by no
-  tool. The only capability-based restriction that is actually in force is
-  *which tools are registered*.
+- The capability table is **now consulted, but it duplicates the registry.**
+  `AgentLoop._invoke_tool` passes `capabilities` to
+  `PolicyEngine.authorize`, which denies a call whose role lacks the
+  required capability. In practice every registered tool is already
+  restricted to roles that hold its capability, so the check has not yet
+  denied anything the registry would not have.
+  `ToolContext.capabilities` is set by the runner and read by no tool.
 - `ToolContext.scope_patterns` (the task's `exclude_paths`) is populated in
-  `agents/runner.py:WorkerRunner.execute` and never consulted.
+  `agents/runner.py:WorkerRunner.execute` and is now passed to
+  `authorize(scope_patterns=...)`, where `PolicyEngine._check_path` enforces
+  it — but only for the tools that declare a `path_argument`.
+  `run_command` declares none, so a command can still read or write
+  anything the worktree's user can reach.
 - `run_command` is registered for `SUPERVISOR`, `IMPLEMENTER`, `TEST_ENGINEER`
-  and `REVIEWER`, and `Capability.EXEC_RUN` is granted to all four. A reviewer
-  can therefore run `git push` inside its worktree; nothing in the runtime
-  stops it, because `PolicyEngine._requires_approval` is only reachable
-  through `authorize`, which is never called.
+  and `REVIEWER`, and `Capability.EXEC_RUN` is granted to all four. A
+  reviewer can therefore run `git push` inside its worktree. That call now
+  reaches `PolicyEngine._requires_approval` and is routed to the approval
+  broker, so it blocks until a human decides — but only because
+  `argv[0] == "git"` exactly. `["/usr/bin/git", "push", "origin", "HEAD"]`
+  passes the executable allow-list (which compares the basename) and is not
+  remapped to `git.push`, so it is not gated.
+- The runtime's own worktree commit
+  (`agents/runner.py:WorkerRunner.execute` →
+  `workspace/worktree.py:WorktreeManager.commit_in_worktree`) is not a tool
+  call, so it is neither capability-checked nor approval-gated.
 - The worktree is not a security boundary, so "another task's files" are only
   out of reach by convention and by the cwd of the command.
 
 **Detection signal.** `EventType.TOOL_INVOKED` records tool name, ok flag
 and error string, but not arguments; `EventType.AGENT_STARTED` /
-`AGENT_FINISHED` record the role and the worktree path. A tool call that was
-refused by the policy engine would be visible as `EventType.TOOL_DENIED` or
-`EventType.POLICY_DENIED` — but neither event type is ever appended by any
-code in this repository.
+`AGENT_FINISHED` record the role and the worktree path. A call that was
+refused, or that required approval, is now visible as
+`EventType.POLICY_DENIED`: `agents/runner.py:WorkerRunner._policy_hook`
+appends it for every decision other than `allow`, with the tool name, the
+decision and the reason. `EventType.TOOL_DENIED` is still defined in
+`store/events.py:EventType` and never appended.
 
 ### (f) Network egress
 
@@ -342,12 +365,14 @@ internal networks; abuse of the operator's IP reputation.
   `CAP_SYS_ADMIN`, or on a host with `user.max_user_namespaces = 0`, the
   probe returns `False` and the command runs with **full network access**.
   The only record is `CommandResult.isolation_note`.
-- That note is effectively lost: `tools/exec.py:RunCommandTool.invoke` puts
-  it in `ToolResult.data`, but `agents/base.py:AgentLoop._render_tool_result`
-  renders only `result.content`, so the model never sees it; and
+- The note travels with the result — `tools/exec.py:RunCommandTool.invoke`
+  puts `isolation_note` into `ToolResult.data` — but it is not surfaced
+  further: `agents/base.py:AgentLoop._render_tool_result` renders only
+  `result.content`, so the model never sees it; and
   `agents/runner.py:WorkerRunner._tool_hook` records only the tool name, the
   ok flag and the error string, so the event log does not contain it either.
-  The loss of network isolation is therefore silent.
+  The loss of network isolation is therefore still silent to an operator
+  reading the run's history.
 - `no_proxy=*` only defeats proxy-mediated egress; direct sockets are
   unaffected.
 - The orchestrator process itself always has egress, by necessity.
@@ -355,23 +380,25 @@ internal networks; abuse of the operator's IP reputation.
   `curl`/`python3`/`git` provides the same capability.
 
 **Detection signal.** `CommandResult.network_isolated` and
-`CommandResult.isolation_note` — which, as described above, are not persisted
-and not surfaced.
+`CommandResult.isolation_note`, carried into `ToolResult.data` by
+`tools/exec.py:RunCommandTool.invoke`. As described above they are not
+written to the event log and not rendered to the model, so they are only
+readable from a live tool result, not from the run's history.
 
 ## 6. Mitigation index
 
 | Control | Implementation | What it actually does | Live? |
 | --- | --- | --- | --- |
-| Capability vocabulary | `security/capabilities.py:Capability`, `CapabilitySet` | Coarse, fixed set of authority tokens | Defined; not consulted at invocation |
-| Per-role grants | `security/capabilities.py:DEFAULT_ROLE_CAPABILITIES`, `capabilities_for_role` | Fixed grants per role; unknown names rejected | Grants are computed and passed, but not enforced |
-| Policy decision | `security/policy.py:PolicyEngine.authorize` | Capability → scope → approval, in that order | **Never called** |
-| Tool rules | `security/policy.py:DEFAULT_TOOL_RULES` | Required capabilities, approval flag, path argument per tool | Registered on the tool objects; used only if `authorize` runs |
-| Path scoping | `security/policy.py:PolicyEngine._check_path` | Rejects `..`/absolute paths, paths outside `scope_root`, and paths matching exclusion patterns | **Not live**; `ToolContext.resolve` provides a weaker live equivalent |
-| Approval gating | `security/policy.py:PolicyEngine._requires_approval` | Maps an action to an `ApprovalConfig` toggle | **Not live** |
-| Protected paths | `security/policy.py:PolicyEngine._check_path` (protected branch) | Requires approval for matching paths | **Not live** |
+| Capability vocabulary | `security/capabilities.py:Capability`, `CapabilitySet` | Coarse, fixed set of authority tokens | Live at invocation (`agents/base.py:AgentLoop._invoke_tool`) |
+| Per-role grants | `security/capabilities.py:DEFAULT_ROLE_CAPABILITIES`, `capabilities_for_role` | Fixed grants per role; unknown names rejected | Grants are computed and enforced by `authorize`; today they duplicate the tool registry |
+| Policy decision | `security/policy.py:PolicyEngine.authorize` | Capability → scope → approval, in that order | **Live** (`agents/base.py:AgentLoop._invoke_tool`) |
+| Tool rules | `security/policy.py:DEFAULT_TOOL_RULES` | Required capabilities, approval flag, path argument per tool | Live; the same rules are also carried on the tool objects |
+| Path scoping | `security/policy.py:PolicyEngine._check_path` | Rejects `..`/absolute paths, paths outside `scope_root`, and paths matching exclusion patterns | Live for path-scoped tools; `ToolContext.resolve` remains the wider containment check |
+| Approval gating | `security/policy.py:PolicyEngine._requires_approval` | Maps an action to an `ApprovalConfig` toggle | Live; reachable for `run_command` with `git push` / `git commit` |
+| Protected paths | `security/policy.py:PolicyEngine._check_path` (protected branch) | Requires approval for matching paths | Live for path-scoped tools |
 | Audit records | `security/policy.py:PolicyEngine._record`, `audit_records`, `denials` | In-memory list of decisions including denials, with argument redaction | In memory only; never persisted |
-| Argument redaction | `security/policy.py:_redact` | Key-name based redaction plus 2000-character truncation | Live only if `authorize` runs |
-| Secret redaction | `security/injection.py:redact_secrets` | Six credential patterns, applied to tool result content | Live (`agents/base.py:AgentLoop._render_tool_result`) |
+| Argument redaction | `security/policy.py:_redact` | Key-name based redaction plus 2000-character truncation | Live (`authorize` records every decision) |
+| Secret redaction | `security/injection.py:redact_secrets` | Seven credential patterns, applied to tool result content | Live (`agents/base.py:AgentLoop._render_tool_result`) |
 | Untrusted labelling | `security/injection.py:wrap_untrusted` | Delimiters plus a "this is data" preamble | Live |
 | Injection detection | `security/injection.py:scan_for_injection` | Seven regex families | Live for repository files only (`planning/inspector.py:RepositoryInspector._scan`) |
 | Tool registry | `tools/base.py:ToolRegistry`, `agents/runner.py:WorkerRunner.build_tools` | Controls *which* tools a role can even name | Live |
@@ -379,7 +406,7 @@ and not surfaced.
 | Symlink refusal | `tools/fs.py:ReadFileTool.invoke` | Refuses to read through a symlink that escapes the workspace | Live (read path only) |
 | Resource limits | `sandbox/limits.py:_preexec` | `RLIMIT_CPU`, `RLIMIT_AS`, `RLIMIT_FSIZE`, `RLIMIT_CORE` | Live |
 | Environment stripping | `sandbox/limits.py:build_environment` | Only allow-listed variables survive | Live |
-| Executable allow-list | `sandbox/limits.py:Sandbox.check_executable` | Basename must be in `SandboxConfig.allowed_binaries` | Live but weak (`sh`, `bash`, `python3`) |
+| Executable allow-list | `sandbox/limits.py:Sandbox.check_executable` | Basename must be in `SandboxConfig.allowed_binaries`; an executable that resolves inside the working directory is refused | Live but weak (`sh`, `bash`, `python3`) |
 | Command timeout | `sandbox/limits.py:Sandbox.run` | `asyncio.wait_for` plus `killpg(SIGKILL)` | Live |
 | Network namespace | `sandbox/limits.py:Sandbox._probe_unshare` | `unshare --net` when permitted | Conditional; failure is silent |
 | Typed messages | `models/message.py:Message._validate_payload` | Discriminated-union validation; no free-form instruction channel | Live |
@@ -417,18 +444,23 @@ and not surfaced.
 
 | Location | Input | Rule |
 | --- | --- | --- |
-| `security/injection.py:redact_secrets` (applied in `agents/base.py:AgentLoop._render_tool_result`) | Tool result **content** | `sk-[A-Za-z0-9]{20,}`, `ghp_[A-Za-z0-9]{20,}`, `AKIA[0-9A-Z]{16}`, `AIza[0-9A-Za-z\-_]{30,}`, PEM `-----BEGIN ... PRIVATE KEY-----`, and `password`\|`passwd`\|`secret`\|`api_key`\|`token` followed by `:`/`=` and 8+ non-space characters |
+| `security/injection.py:redact_secrets` (applied in `agents/base.py:AgentLoop._render_tool_result`) | Tool result **content** | `sk-[A-Za-z0-9_\-]{20,}`, `ghp_[A-Za-z0-9]{20,}`, `github_pat_[A-Za-z0-9_]{20,}`, `AKIA[0-9A-Z]{16}`, `AIza[0-9A-Za-z\-_]{30,}`, PEM `-----BEGIN ... PRIVATE KEY-----`, and `password`\|`passwd`\|`secret`\|`api_key`\|`token` followed by `:`/`=` and 8+ non-space characters |
 | `security/policy.py:_redact` (applied in `security/policy.py:PolicyEngine._record`) | Tool **arguments** | Argument *key names* containing `api_key`, `apikey`, `secret`, `token`, `password`, `passwd`, `authorization`, `private_key` or `credential` are replaced with `***redacted***`; string values longer than 2000 characters are truncated |
 
 ### 7.3 Where redaction fails
 
-1. **Anthropic keys are not matched.** The pattern is
-   `\bsk-[A-Za-z0-9]{20,}\b` (`security/injection.py:165`). The key
-   `sk-ant-api03-...` contains hyphens inside the alphanumeric run, so the
-   character class stops after `ant` and the pattern cannot match. The
-   `x-api-key` credential used by
-   `providers/anthropic.py:AnthropicProvider.complete` is therefore *not*
-   redacted from tool output.
+1. **Anthropic-style keys are matched now.** The pattern is
+   `\bsk-[A-Za-z0-9_\-]{20,}\b` (`security/injection.py:165`). The
+   character class accepts `_` and `-`, so `sk-ant-api03-...` is matched and
+   the `x-api-key` credential used by
+   `providers/anthropic.py:AnthropicProvider.complete` *is* redacted from
+   tool output. `github_pat_[A-Za-z0-9_]{20,}` was added alongside it for
+   the fine-grained GitHub token format.
+   *Remediation status: closed.* The earlier revision of this document
+   stated that the pattern was `\bsk-[A-Za-z0-9]{20,}\b` and that Anthropic
+   keys were therefore **not** redacted; that is no longer the case. The
+   redactor is still a pattern list, not a filter — see item 4 and §9
+   item 13.
 2. **Redaction of arguments is name-based only.** A secret passed under a
    benign key — for example `{"command": ["curl", "-H", "Authorization: Bearer
    sk-..."]}` — is not redacted. It is truncated at 2000 characters, not
@@ -485,9 +517,10 @@ contain `push` or `commit`, the action is remapped to `git.push` or
 
 ### 8.2 How approvals are recorded
 
-- `store/state.py:StateStore.create_approval` inserts a row into `approvals`
-  (`approval_id`, `run_id`, `task_id`, `action`, `rationale`, `arguments`,
-  `risk`, `status='pending'`, `created_at`) and appends
+- `agents/approval.py:ApprovalBroker.request` calls
+  `store/state.py:StateStore.create_approval`, which inserts a row into
+  `approvals` (`approval_id`, `run_id`, `task_id`, `action`, `rationale`,
+  `arguments`, `risk`, `status='pending'`, `created_at`) and appends
   `EventType.HUMAN_APPROVAL` with `status: "requested"` **in the same
   transaction**.
 - `store/state.py:StateStore.decide_approval` updates the row to `approved`
@@ -512,68 +545,124 @@ content, in any task, in any attempt. There is no argument digest to compare.
 `PolicyEngine._record` never populates it, so an audit record cannot be
 linked back to the approval that authorised it.
 
-`config.py:ApprovalConfig.approval_timeout_s` (default 3600 s) is declared
-but never read by any code in this repository: there is no approval expiry
-and no automatic denial on timeout.
+`config.py:ApprovalConfig.approval_timeout_s` (default 3600 s) is read by
+`agents/approval.py:ApprovalBroker.request`, which polls the store until a
+decision is recorded or the timeout elapses. On expiry the broker logs a
+`HUMAN_APPROVAL` event with `status: "timed_out"` and returns `False`, so
+the action is refused rather than performed — but the refusal is silent for
+an operator who does not read the event log.
 
 ### 8.4 Enforcement status
 
-**No action in the current runtime requires human approval.** Specifically:
+**One action in the current runtime requires human approval: a
+`run_command` whose argv is `git push` or `git commit`.**
 
-- `PolicyEngine.authorize` is not called from `orchestrator.py`,
-  `agents/runner.py`, `agents/base.py`, `tools/base.py` or any tool module.
-  `orchestrator.py:Orchestrator.__init__` constructs `self.policy =
-  PolicyEngine(sandbox=..., approval=...)` and never uses the object again.
-- `StateStore.create_approval` is not called from anywhere, so no approval is
-  ever requested.
-- The tools that would need approval are not registered:
-  `agents/runner.py:WorkerRunner.build_tools` registers only `read_file`,
-  `list_dir`, `run_command`, `git_diff`, `git_status` and (for implementer and
-  test engineer) `write_file`. `commit_changes`, `push_changes`,
-  `delete_path`, `request_approval` and `emit_artifact` are never registered.
-  `http_request` has no implementation anywhere in the repository.
+How the path is wired:
+
+- `orchestrator.py:Orchestrator.__init__` constructs
+  `self.policy = PolicyEngine(sandbox=..., approval=...)` and
+  `self.approver = ApprovalBroker(state=..., log=..., config=config.approval,
+  run_id=config.run_id, bus=self.bus, auto_approve=auto_approve)`, and
+  passes `approver.request` to the `WorkerRunner` as `approver`.
+- `agents/base.py:AgentLoop._invoke_tool` calls `self.policy.authorize(...)`
+  before every tool invocation, passing `capabilities`, `tool`,
+  `arguments`, `scope_root` and `scope_patterns`. A `DENY` decision
+  returns a `ToolResult` with `error_class="policy"` and the tool never
+  runs; a `REQUIRE_APPROVAL` decision is routed to the approver and, if
+  the approver does not return `True`, the call is refused with the same
+  `error_class="policy"`.
+- `agents/approval.py:ApprovalBroker.request` creates the approval row
+  (`store/state.py:StateStore.create_approval`), publishes an
+  `APPROVAL_REQUEST` message and polls the store until a decision is
+  recorded or `ApprovalConfig.approval_timeout_s` elapses.
+- `agents/runner.py:WorkerRunner._policy_hook` appends
+  `EventType.POLICY_DENIED` for every decision other than `allow`.
+
+What is still not gated:
+
+- The tools that the policy table marks as approval-gated are not
+  registered: `agents/runner.py:WorkerRunner.build_tools` registers only
+  `read_file`, `list_dir`, `run_command`, `git_diff`, `git_status` and (for
+  implementer and test engineer) `write_file`. `commit_changes`,
+  `push_changes`, `delete_path`, `request_approval` and `emit_artifact` are
+  never registered. `http_request` has no implementation anywhere in the
+  repository. A model therefore cannot *name* them.
 - `TaskStatus.AWAITING_APPROVAL` exists in the lifecycle table and is
-  reachable from `RUNNING`, but the scheduler never enters it.
-- `run_command` with `["git", "push", "origin", "HEAD"]` is therefore
-  permitted: the tool is registered for every LLM role, `git` is on the
-  executable allow-list, and the approval check that would have caught it is
-  never evaluated.
+  reachable from `RUNNING`, but nothing transitions into it: the approval
+  gate blocks inside the agent loop and surfaces as a tool error, not as a
+  task state.
+- The runtime's own commit — `agents/runner.py:WorkerRunner.execute` →
+  `workspace/worktree.py:WorktreeManager.commit_in_worktree` — is not a
+  tool call, so it is neither capability-checked nor approval-gated.
+- The remap in `PolicyEngine._requires_approval` compares `argv[0]` to the
+  literal string `"git"`. `["/usr/bin/git", "push", "origin", "HEAD"]` is
+  accepted by the executable allow-list (which compares the basename) but
+  is not remapped to `git.push`, so it is not gated.
+- The approval itself is an unbound boolean. `authorize` is called with
+  `approved=False`, and the human's decision is applied by the *caller*
+  (`AgentLoop._invoke_tool`), not by comparing an approval record against
+  the action or the arguments it authorised (§8.3).
 
 ## 9. Known weaknesses
 
 Stated plainly, without hedging.
 
-1. **The policy engine is not on the execution path.**
-   `security/policy.py:PolicyEngine.authorize` implements capability checks,
-   scope checks and approval gates correctly and in the right order, but no
-   runtime code calls it. Every control it provides — the capability table,
-   path scoping, exclusion patterns, protected paths, approval gating, the
-   audit trail — is therefore inert. The `PolicyDeniedError` exception it
-   defines is never raised anywhere in the repository.
-2. **The capability layer is advisory.** `AgentLoop._invoke_tool` accepts a
-   `capabilities` argument and ignores it; `ToolContext.capabilities` is read
-   by no tool. The only capability-derived restriction actually in force is
-   the set of tools registered per role.
-3. **`ToolContext.scope_patterns` is never consulted.** The task's
+1. **The policy engine is on the execution path, but it is not a
+   containment boundary.** As of this revision `authorize` is called from
+   `agents/base.py:AgentLoop._invoke_tool` before every tool invocation, and
+   its `DENY` and `REQUIRE_APPROVAL` outcomes are honoured. What remains
+   inert or weak:
+   - the audit trail it keeps (`PolicyEngine.audit_records`,
+     `PolicyEngine.denials`) is an in-memory list and is never persisted;
+   - `AuditRecord.approval_id` is never populated, so an audit record
+     cannot be tied to the approval that authorised it;
+   - the `PolicyDeniedError` exception it defines is still never raised — a
+     denial is returned as a `ToolResult` with `error_class="policy"`;
+   - the capability check is, today, a duplicate of the tool registry
+     (item 2), and the approval gate reaches exactly one action (§8.4);
+   - the scope check applies to path-scoped tools only, so `run_command`
+     remains unconfined.
+2. **The capability layer is enforced but adds little.**
+   `AgentLoop._invoke_tool` passes `capabilities` to
+   `PolicyEngine.authorize`, which denies a call whose role lacks the
+   required capability — so it is no longer ignored. It is nevertheless
+   redundant today: every registered tool is already restricted to the roles
+   that hold its capability, so the check has not denied anything the
+   registry would not have. `ToolContext.capabilities` is still read by no
+   tool.
+   *Remediation status: closed as "not consulted"; open as "adds no
+   restriction beyond the registry".*
+3. **`ToolContext.scope_patterns` reaches only the fs tools.** The task's
    `exclude_paths` are copied into the tool context in
-   `agents/runner.py:WorkerRunner.execute` and then ignored. The live
-   equivalent (`ToolContext.resolve`) confines paths to the worktree root but
-   does not exclude anything the task scoped out.
+   `agents/runner.py:WorkerRunner.execute` and are now passed to
+   `authorize(scope_patterns=...)`, where `PolicyEngine._check_path`
+   rejects a path that matches an exclusion pattern. That reaches
+   `read_file`, `list_dir` and `write_file` — the tools that declare a
+   `path_argument`. `run_command` declares none, so a command can still
+   read or write anything the worktree's user can reach, and the
+   `ToolContext.resolve` containment check does not apply to it either.
+   *Remediation status: closed for path-scoped tools; open for
+   `run_command`.*
 4. **The executable allow-list is not a meaningful barrier.**
    `config.py:SandboxConfig.allowed_binaries` includes `sh`, `bash`,
    `python3` and `pytest`. Any agent with `run_command` can execute arbitrary
-   code with the user's privileges. `Sandbox.check_executable` compares only
-   `Path(executable).name`, so path tricks do not help, but neither does
-   anything else.
+   code with the user's privileges. `Sandbox.check_executable` compares
+   `Path(executable).name`, so path tricks do not help. It also resolves a
+   bare name through `PATH` (`shutil.which`) and refuses an executable
+   whose resolved path lies inside the working directory, so an agent cannot
+   plant its own `python3` in the worktree and have it executed in
+   preference to the system one. That closes one planting trick; it does not
+   change the fact that the system `python3` is itself on the list.
 5. **`HOME` is preserved in the sandbox environment**, so `~/.ssh`,
    `~/.aws`, `~/.netrc`, `~/.git-credentials` and `~/.config/gh` are readable
    by any sandboxed command.
 6. **There is no network namespace on most hosts.** `Sandbox._probe_unshare`
-   detects the failure and sets `isolation_note`, but that note is neither
-   surfaced to the model (it lives in `ToolResult.data`, and
-   `AgentLoop._render_tool_result` renders only `content`) nor written to the
-   event log (`WorkerRunner._tool_hook` records only name/ok/error). The loss
-   of network isolation is silent.
+   detects the failure and sets `isolation_note`. That note is carried into
+   `ToolResult.data` by `tools/exec.py:RunCommandTool.invoke`, but it is
+   neither surfaced to the model (`AgentLoop._render_tool_result` renders
+   only `content`) nor written to the event log (`WorkerRunner._tool_hook`
+   records only name/ok/error). The loss of network isolation is still
+   silent to an operator reading the run's history.
 7. **There is no seccomp filter.** No syscall filtering, no `no_new_privs`,
    no capability drop, no read-only or tmpfs filesystem, no `chroot`.
 8. **`RLIMIT_NPROC` is deliberately not used.** `sandbox/limits.py:_preexec`
@@ -603,23 +692,39 @@ Stated plainly, without hedging.
     the process inside it can read the whole home directory.
 13. **The provider receives everything.** Every tool result — file contents,
     command output, diffs — is sent to the model provider. `redact_secrets`
-    is the only filter, and it misses Anthropic keys (§7.3).
+    is the only filter. It now matches Anthropic-style keys (§7.3), but it
+    is a pattern list, not a filter: anything it does not match — a bare
+    token, a credential in a non-standard format — is sent to the provider
+    verbatim.
 14. **Approval is not bound to an action.** `PolicyEngine.authorize`'s
     `approved: bool` is an unbound boolean; `AuditRecord.approval_id` is
-    never populated; `ApprovalConfig.approval_timeout_s` is never read.
-15. **`ApprovalConfig.protected_paths` is dead configuration**, because the
-    only code that reads it is `PolicyEngine._check_path`, which is only
-    reachable through `authorize`.
+    never populated. The broker's timeout
+    (`ApprovalConfig.approval_timeout_s`) *is* read and does refuse the
+    action on expiry, but the approval that was granted is not compared
+    against the action, the arguments, the task or the attempt it was
+    requested for.
+15. **`ApprovalConfig.protected_paths` reaches only path-scoped tools.**
+    It is read by `PolicyEngine._check_path`, which is now reachable
+    through `authorize`, and a match produces a `REQUIRE_APPROVAL` decision
+    with the action `fs.protected:<path>`. Because only the fs tools
+    declare a `path_argument`, a protected path is protected against
+    `read_file`, `list_dir` and `write_file` — and not against
+    `run_command`, which can read the same file.
+    *Remediation status: closed for path-scoped tools; open for
+    `run_command`.*
 16. **Dependency integrity is not managed.** `pyproject.toml` specifies lower
     bounds with no lockfile and no hashes; a malicious package executes inside
     the orchestrator process with full access to the environment, the
     filesystem and the API keys.
 17. **`git` subprocesses inherit the full environment** including the model
     API keys (`workspace/worktree.py:git`), unlike sandboxed commands.
-18. **Denials are not observable.** `EventType.TOOL_DENIED` and
-    `EventType.POLICY_DENIED` are defined in `store/events.py:EventType` and
-    never appended. `PolicyEngine.denials()` reads an in-memory list that is
-    empty in practice.
+18. **Denials are only partly observable.** `EventType.POLICY_DENIED` is
+    appended by `agents/runner.py:WorkerRunner._policy_hook` for every
+    decision other than `allow`, with the tool name, the decision and the
+    reason — so denials are now in the event log. `EventType.TOOL_DENIED`
+    is still defined in `store/events.py:EventType` and never appended, and
+    `PolicyEngine.denials()` still reads an in-memory list that is never
+    persisted.
 19. **Argument values are not recorded in the event log.** `TOOL_INVOKED`
     records the tool name, the ok flag and the error. A post-hoc
     investigation cannot reconstruct what a worker actually asked for.
@@ -639,13 +744,19 @@ given the code as it stands, not features that exist.
 - Treat the **model provider as a trusted third party** that receives your
   source code.
 - Do not point the runtime at a repository you would mind an attacker
-  reading, and do not rely on `ApprovalConfig` to stop a push.
+  reading. `ApprovalConfig` now stops a `run_command` whose argv is exactly
+  `git push` or `git commit`, and little else: an absolute path to `git` is
+  not gated, `run_command` is not path-scoped, and the runtime's own
+  worktree commit is not a tool call.
 - If `unshare --net` is unavailable on the host, assume sandboxed commands
   have full egress. Verify with `unshare --net -- true` before relying on
   it.
 - Keep `<data_dir>` on a filesystem with restrictive permissions; it contains
   the event log, the run configuration and the approval table in the clear.
 - If the approval and capability layers must be enforced rather than
-  documented, the missing link is a call to `PolicyEngine.authorize` in
-  `AgentLoop._invoke_tool` (or in a tool-dispatch wrapper in
-  `tools/base.py`) with a per-action approval token rather than a boolean.
+  documented, the missing link is no longer "call `PolicyEngine.authorize`":
+  it is called from `AgentLoop._invoke_tool`. What is missing is an approval
+  that is bound to a specific action and argument set rather than a
+  boolean; a `_requires_approval` remap that recognises `git` however it is
+  spelled on the command line; a path scope for `run_command`, so the fs
+  controls apply to it; and a persisted audit trail.

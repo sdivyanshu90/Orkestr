@@ -280,7 +280,7 @@ class TaskGraph:
                 chain, total = visit(dep)
                 if total > best_time:
                     best_chain, best_time = chain, total
-            result = (best_chain + [tid], best_time + task.estimated_duration_s)
+            result = ([*best_chain, tid], best_time + task.estimated_duration_s)
             memo[tid] = result
             return result
 

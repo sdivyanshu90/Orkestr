@@ -23,10 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ..config import RunConfig
-from ..errors import ConflictError, InfrastructureError
 from ..models.evidence import CheckRecord
 from ..store.events import EventLog, EventType
 from ..workspace.worktree import Worktree, WorktreeManager, git
@@ -157,7 +155,7 @@ class IntegrationEngine:
                         {"task_id": patch.task_id, "artifact_id": patch.artifact_id}
                     )
                     continue
-                applied, error, unmerged = self._apply(workspace, patch)
+                _applied, error, unmerged = self._apply(workspace, patch)
                 if error:
                     result.conflicts.append(
                         ConflictRecord(

@@ -33,7 +33,6 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig
-from ..errors import VerificationError
 from ..models.evidence import CheckRecord, CriterionState, EvidencePackage
 from ..models.task import AcceptanceCriterion, TaskSpec
 from ..store.events import EventLog, EventType

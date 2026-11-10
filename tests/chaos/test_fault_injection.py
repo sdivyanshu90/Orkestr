@@ -11,9 +11,9 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.benchmark.chaos import (
-    CrashyRunner,
     Fault,
     FaultSpec,
     InjectedFaultProvider,
@@ -27,8 +27,6 @@ from agent_squad.providers.mock import MockProvider
 from agent_squad.store.db import Database
 from agent_squad.store.events import EventLog
 from agent_squad.store.state import StateStore
-
-from helpers import two_independent_spec
 
 
 def make_config(tmp_path: Path, repo: Path, run_id: str, **overrides) -> RunConfig:
@@ -156,7 +154,7 @@ async def test_garbage_model_output_is_rejected_not_acted_on(
 ) -> None:
     """A model that returns malformed output must not corrupt the run."""
     from agent_squad.errors import ValidationError
-    from agent_squad.planning.planner import LLMPlan, LLMPlanner
+    from agent_squad.planning.planner import LLMPlanner
 
     class GarbageProvider:
         name = "garbage"
