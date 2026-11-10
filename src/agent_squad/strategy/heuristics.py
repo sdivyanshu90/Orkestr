@@ -103,13 +103,17 @@ class CoordinationModel:
 
         Driven by how many tasks touch the same files and by how deep the
         dependency structure is (deep structures amplify a single conflict).
+        The shared-file weight from the configuration scales the conflict
+        contribution, so an operator who believes their repository has more
+        (or less) file overlap than the default can say so.
         """
         conflict_ratio = self.shared_file_conflict_ratio()
         depth_factor = 1.0
         if self.estimates:
             max_deps = max((e.dependencies for e in self.estimates), default=0)
             depth_factor = 1.0 + min(0.5, max_deps * 0.1)
-        risk = min(1.0, conflict_ratio * depth_factor)
+        weighted = min(1.0, conflict_ratio * self.config.shared_file_conflict_weight)
+        risk = min(1.0, weighted * depth_factor)
         return round(risk * self.config.integration_risk_penalty, 6)
 
     def coordination_overhead_tokens(self, workers: int) -> int:

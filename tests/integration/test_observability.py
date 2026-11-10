@@ -8,18 +8,16 @@ span object exists.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
+from helpers import two_independent_spec
 
 from agent_squad.config import RunConfig
 from agent_squad.observe.events import StructuredLogger
-from agent_squad.observe.metrics import RunMetrics, StrategyAggregate
-from agent_squad.observe.tracing import Span, SpanRecorder, Tracer
+from agent_squad.observe.metrics import RunMetrics
+from agent_squad.observe.tracing import SpanRecorder, Tracer
 from agent_squad.orchestrator import Orchestrator
-
-from helpers import two_independent_spec
 
 
 @pytest.fixture()
@@ -60,6 +58,11 @@ def test_the_spans_have_real_durations(traced_run) -> None:
         assert span.duration_s >= 0.0
     run_span = next(s for s in spans if s.name == "run")
     assert run_span.duration_s > 0.0
+    # The task spans must fit inside the run span.
+    task_spans = [s for s in spans if s.name == "task"]
+    assert task_spans
+    for task_span in task_spans:
+        assert task_span.duration_s <= run_span.duration_s + 0.001
 
 
 @pytest.mark.integration
@@ -105,9 +108,8 @@ def test_the_tracer_degrades_gracefully_without_opentelemetry() -> None:
 
 def test_a_span_records_an_error_without_swallowing_it() -> None:
     tracer = Tracer(service_name="test")
-    with pytest.raises(ValueError):
-        with tracer.span("failing"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), tracer.span("failing"):
+        raise ValueError("boom")
     span = tracer.recorder.spans[0]
     assert span.status == "error"
     assert "boom" in (span.error or "")

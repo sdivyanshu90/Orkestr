@@ -91,12 +91,13 @@ async def test_a_permanently_unavailable_provider_fails_safely(
 @pytest.mark.chaos
 async def test_a_worker_crash_does_not_corrupt_the_run(tmp_path: Path, repo: Path) -> None:
     """An unexpected exception in a worker must be contained."""
+    from agent_squad.agents.runner import WorkerRunner
+    from agent_squad.benchmark.chaos import install_runner_crash
+
     config = make_config(tmp_path, repo, "chaos_crash")
     orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
     try:
         # Wrap the runner the scheduler will use.
-        from agent_squad.agents.runner import WorkerRunner
-
         original = WorkerRunner.execute
         calls = {"n": 0}
 
@@ -123,6 +124,38 @@ async def test_a_worker_crash_does_not_corrupt_the_run(tmp_path: Path, repo: Pat
     assert outcome.status.value in ("succeeded", "completed_with_failures")
     # Whatever happened, the run must still be readable and consistent.
     assert len(states) == 2
+
+
+@pytest.mark.chaos
+async def test_the_crashy_runner_wrapper_raises_then_recovers() -> None:
+    """The documented wrapper behaves as advertised."""
+    from agent_squad.benchmark.chaos import install_runner_crash
+
+    class Inner:
+        async def execute(self, *args, **kwargs):
+            return "ok"
+
+    wrapper = install_runner_crash(Inner(), crashes=1)
+    with pytest.raises(RuntimeError):
+        await wrapper.execute()
+    assert await wrapper.execute() == "ok"
+
+
+@pytest.mark.chaos
+async def test_the_provider_fault_installer_applies_the_faults() -> None:
+    from agent_squad.benchmark.chaos import install_provider_faults
+    from agent_squad.errors import TransientModelError
+    from agent_squad.providers.base import ModelRequest
+    from agent_squad.providers.mock import MockProvider
+
+    provider = install_provider_faults(
+        MockProvider(), [FaultSpec(kind=Fault.PROVIDER_FLAKY, times=1)]
+    )
+    request = ModelRequest(messages=[])
+    with pytest.raises(TransientModelError):
+        await provider.complete(request)
+    # The second call succeeds.
+    await provider.complete(request)
 
 
 @pytest.mark.chaos

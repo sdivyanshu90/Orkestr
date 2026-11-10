@@ -24,7 +24,12 @@ from typing import Any
 
 from ..artifacts.store import ArtifactStore
 from ..config import RunConfig
-from ..models.artifact import ArtifactKind
+from ..models.artifact import (
+    ArtifactKind,
+    FileManifestEntry,
+    PatchManifest,
+    sha256_bytes,
+)
 from ..models.evidence import ChangedFile, EvidencePackage, Limitation
 from ..models.message import Message, MessageKind, make_message
 from ..models.task import ADVISORY_CHECKS, Role, TaskSpec, TaskStatus
@@ -58,6 +63,7 @@ class WorkerRunner:
     worktrees: WorktreeManager
     bus: MessageBus | None = None
     provider: Any = None
+    provider_resolver: Any = None
     supervisor: str = "supervisor"
     keep_worktrees: bool = False
     policy: Any = None
@@ -173,7 +179,7 @@ class WorkerRunner:
         tools = self.build_tools(task.role)
 
         loop = AgentLoop(
-            provider=self.provider,
+            provider=self._provider_for(task),
             tools=tools,
             config=self.config,
             bus=self.bus,
@@ -194,6 +200,7 @@ class WorkerRunner:
             budget_scope=f"task:{task.id}",
             tracer=self.tracer,
             on_approval_state=self._approval_hook(task, attempt),
+            provider_scope=f"provider:{getattr(self.provider, 'name', 'default')}",
         )
 
         try:
@@ -369,6 +376,19 @@ class WorkerRunner:
 
     # -------------------------------------------------------------- capture
 
+    def _provider_for(self, task: TaskSpec) -> Any:
+        """The provider this task's role should use.
+
+        A role may override the run's model through the configuration; the
+        override is resolved once per role by the orchestrator.
+        """
+        if self.provider_resolver is None:
+            return self.provider
+        try:
+            return self.provider_resolver(task.role.value)
+        except Exception:
+            return self.provider
+
     def _capture_diff(self, worktree: Worktree) -> tuple[str, list[Any]]:
         """Capture the raw diff and the changed-file list of a worktree.
 
@@ -379,9 +399,18 @@ class WorkerRunner:
         self.worktrees.stage_all(worktree)
         diff = self.worktrees.diff(worktree, staged=True)
         entries = self.worktrees.changed_files(worktree)
+        counts = _diff_line_counts(diff)
         changed: list[Any] = []
         for path, status in entries:
-            changed.append(ChangedFile(path=path, status=_normalise_status(status)))
+            added, removed = counts.get(path, (0, 0))
+            changed.append(
+                ChangedFile(
+                    path=path,
+                    status=_normalise_status(status),
+                    added_lines=added,
+                    removed_lines=removed,
+                )
+            )
         return diff, changed
 
     def _store_patch(
@@ -404,7 +433,26 @@ class WorkerRunner:
             base_revision=worktree.base_revision,
             tool_calls=tuple(result.tool_calls),
         )
-        return self.artifacts.put_text(
+        # The manifest is the machine-readable description of the change:
+        # which files, how many lines, and the content hash of each one.
+        # It travels with the patch so that a consumer never has to parse
+        # the diff to learn what changed.
+        manifest = PatchManifest(
+            base_revision=worktree.base_revision,
+            head_revision=head_revision or None,
+            entries=tuple(
+                FileManifestEntry(
+                    path=c.path,
+                    status=c.status,
+                    added_lines=c.added_lines,
+                    removed_lines=c.removed_lines,
+                    sha256_after=self._file_hash(worktree.path, c.path),
+                )
+                for c in changed
+            ),
+            files=tuple(c.path for c in changed),
+        )
+        artifact = self.artifacts.put_text(
             diff,
             kind=ArtifactKind.PATCH,
             provenance=provenance,
@@ -416,9 +464,19 @@ class WorkerRunner:
                 "worktree": str(worktree.path),
                 "task_id": task.id,
                 "files": [c.path for c in changed],
+                "manifest": manifest.model_dump(mode="json"),
             },
             media_type="text/x-diff",
         )
+        return artifact
+
+    @staticmethod
+    def _file_hash(worktree: Path, relative: str) -> str | None:
+        target = worktree / relative
+        try:
+            return sha256_bytes(target.read_bytes())
+        except OSError:
+            return None
 
     def _build_evidence(
         self,
@@ -561,6 +619,8 @@ class WorkerRunner:
                     usage = Usage(input_tokens=0, output_tokens=tokens, estimated=True)
                 self.budget.record(f"task:{task.id}", usage)
                 self.budget.record("run", usage)
+                provider_scope = f"provider:{getattr(self.provider, 'name', 'default')}"
+                self.budget.record(provider_scope, usage)
 
         return hook
 
@@ -683,3 +743,43 @@ def _normalise_status(status: str) -> str:
         "C": "added",
     }
     return mapping.get(status.strip()[:1], "modified")
+
+
+def _diff_line_counts(diff: str) -> dict[str, tuple[int, int]]:
+    """Count added and removed lines per file in a unified diff.
+
+    The counts are derived from the diff itself rather than from a second
+    `git diff --numstat` call, so the manifest and the patch cannot
+    disagree about the same change.
+    """
+    counts: dict[str, tuple[int, int]] = {}
+    current: str | None = None
+    added = 0
+    removed = 0
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            if current is not None:
+                counts[current] = (added, removed)
+            current = None
+            added = removed = 0
+            # "diff --git a/<path> b/<path>"
+            parts = line.split(" ")
+            if len(parts) >= 4:
+                current = parts[3][2:] if parts[3].startswith("b/") else parts[3]
+            continue
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path.startswith("b/"):
+                current = path[2:]
+            elif path == "/dev/null":
+                current = None
+            continue
+        if current is None:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    if current is not None:
+        counts[current] = (added, removed)
+    return counts

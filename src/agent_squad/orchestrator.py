@@ -153,6 +153,12 @@ class Orchestrator:
             token_limit=config.budget.run_token_limit,
             cost_limit_usd=config.budget.run_cost_limit_usd,
         )
+        if config.budget.per_provider_token_limit is not None:
+            # A provider-wide ceiling, applied per provider scope.
+            self.budget.set_scope_limits(
+                f"provider:{config.provider.name}",
+                token_limit=config.budget.per_provider_token_limit,
+            )
         self.logger = StructuredLogger(
             level=config.observability.log_level,
             json_output=config.observability.log_json,
@@ -173,6 +179,7 @@ class Orchestrator:
         self._providers: list[ModelProvider] = []
         self._router: ProviderRouter | None = None
         self._injected_provider = provider
+        self._role_providers: dict[str, ModelProvider] = {}
         self._record_exchanges = record_exchanges
         self.recorder: Any = None
 
@@ -196,6 +203,29 @@ class Orchestrator:
                 providers[0] = self.recorder
             self._router = ProviderRouter(providers, configs)
         return self._router
+
+    def provider_for(self, role: str) -> Any:
+        """The provider a role should use.
+
+        A role may override the run's model through
+        :class:`~agent_squad.config.RoleConfig`.  The override is applied
+        by building a provider for that model once and reusing it, so a
+        per-role model is not re-constructed per task.
+        """
+        override = self.config.roles.get(role)
+        model_override = override.model_override if override else None
+        if not model_override or model_override == self.config.provider.model:
+            return self.provider
+        cached = self._role_providers.get(role)
+        if cached is None:
+            from .providers.registry import build_provider
+
+            config = self.config.provider.model_copy(
+                update={"model": model_override}
+            )
+            cached = build_provider(config)
+            self._role_providers[role] = cached
+        return cached
 
     @property
     def provider(self) -> ModelProvider:
@@ -344,6 +374,7 @@ class Orchestrator:
             worktrees=self.worktrees,
             bus=self.bus,
             provider=self.provider,
+            provider_resolver=self.provider_for,
             supervisor=SUPERVISOR,
             policy=self.policy,
             approver=self.approver.request,

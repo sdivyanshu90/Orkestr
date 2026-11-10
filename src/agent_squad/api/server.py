@@ -18,11 +18,14 @@ from typing import Any
 
 from ..config import RunConfig
 from ..ids import run_id as new_run_id
+from ..models.message import INFORMATIONAL_KINDS
 from ..models.run import RunStatus
 from ..orchestrator import Orchestrator
 from ..store.db import Database
 from ..store.events import EventLog
 from ..store.state import StateStore
+
+_INFORMATIONAL_KINDS = {k.value for k in INFORMATIONAL_KINDS}
 
 try:  # pragma: no cover - optional dependency
     from fastapi import FastAPI, HTTPException, Query
@@ -244,7 +247,13 @@ def create_app(data_dir: str | Path | None = None) -> Any:
     async def get_messages(run_id: str) -> dict[str, Any]:
         db, state, _ = _open(run_id)
         try:
-            return {"messages": state.list_messages(run_id)}
+            return {
+                "messages": state.list_messages(run_id),
+                "state_effecting": [
+                    m for m in state.list_messages(run_id)
+                    if m["kind"] not in _INFORMATIONAL_KINDS
+                ],
+            }
         finally:
             db.close()
 

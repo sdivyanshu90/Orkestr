@@ -16,8 +16,6 @@ import pytest
 
 from agent_squad.agents.approval import ApprovalBroker
 from agent_squad.config import ApprovalConfig, RunConfig
-from agent_squad.errors import PolicyError
-from agent_squad.models.task import TaskStatus
 from agent_squad.orchestrator import Orchestrator
 from agent_squad.providers.base import ModelRequest, ModelResponse, ToolCall
 from agent_squad.providers.mock import MockProvider
@@ -262,8 +260,8 @@ def test_the_broker_times_out_rather_than_hanging(tmp_path: Path) -> None:
 
 def test_the_policy_engine_requires_approval_for_a_push() -> None:
     engine = PolicyEngine(approval=ApprovalConfig())
-    from agent_squad.security.capabilities import capabilities_for_role
     from agent_squad.models.task import Role
+    from agent_squad.security.capabilities import capabilities_for_role
 
     caps = capabilities_for_role(Role.IMPLEMENTER)
     decision = engine.authorize(
@@ -279,8 +277,8 @@ def test_the_policy_engine_requires_approval_for_a_push() -> None:
 
 def test_the_policy_engine_requires_approval_for_a_delete() -> None:
     engine = PolicyEngine(approval=ApprovalConfig())
-    from agent_squad.security.capabilities import capabilities_for_role
     from agent_squad.models.task import Role
+    from agent_squad.security.capabilities import capabilities_for_role
 
     caps = capabilities_for_role(Role.IMPLEMENTER)
     decision = engine.authorize(

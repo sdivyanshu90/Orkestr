@@ -176,6 +176,12 @@ def install_provider_faults(provider: Any, faults: list[FaultSpec]) -> InjectedF
     return wrapper
 
 
+def install_runner_crash(runner: Any, crashes: int = 1, message: str = "injected worker crash") -> CrashyRunner:
+    """Wrap ``runner`` so that its next ``crashes`` attempts raise."""
+    wrapper = CrashyRunner(inner=runner, crashes=crashes, message=message)
+    return wrapper
+
+
 def assert_safe_failure(
     *,
     status: str,
@@ -196,3 +202,6 @@ def assert_safe_failure(
     for task_id in succeeded_tasks or []:
         if task_id in failed_tasks:
             raise AssertionError(f"task {task_id} is both failed and succeeded")
+    for task_id in blocked_tasks or []:
+        if task_id in failed_tasks:
+            raise AssertionError(f"task {task_id} is both failed and blocked")

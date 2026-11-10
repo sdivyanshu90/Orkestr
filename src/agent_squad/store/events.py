@@ -183,28 +183,6 @@ class EventLog:
             created_at=created_at or utcnow(),
         )
 
-    def append_many(self, events: list[Event]) -> None:
-        """Append a batch of events atomically."""
-        if not events:
-            return
-        with self._db.transaction() as conn:
-            for event in events:
-                conn.execute(
-                    "INSERT INTO events(event_id, run_id, task_id, attempt, type, actor, "
-                    "payload, created_at, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        event.event_id,
-                        event.run_id,
-                        event.task_id,
-                        event.attempt,
-                        event.type.value,
-                        event.actor,
-                        dumps(event.payload),
-                        event.created_at.isoformat(),
-                        event.recorded_at,
-                    ),
-                )
-
     # ------------------------------------------------------------------ read
 
     def read(

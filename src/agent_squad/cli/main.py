@@ -301,6 +301,10 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             e.payload
             for e in events.read(args.run_id, types=[EventType.STRATEGY_SELECTED])
         ]
+    if args.export:
+        # The exported log is newline-delimited JSON: portable, greppable
+        # and readable without this tool.
+        payload["export"] = events.export(args.run_id)
 
     if args.json:
         _print_json(payload)
@@ -511,6 +515,9 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--messages", action="store_true")
     inspect_parser.add_argument("--checkpoints", action="store_true")
     inspect_parser.add_argument("--decisions", action="store_true")
+    inspect_parser.add_argument(
+        "--export", action="store_true", help="include the newline-delimited event log"
+    )
     inspect_parser.add_argument("--json", action="store_true")
     inspect_parser.set_defaults(func=cmd_inspect)
 

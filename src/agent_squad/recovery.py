@@ -195,6 +195,9 @@ def recover_run(
                 state.set_run_status(
                     run_id, RunStatus.RUNNING, payload={"reason": "resumed after recovery"}
                 )
+        report.unresolved_side_effects = verify_side_effects(
+            run_id, data_dir=data_dir
+        )
         log.append(
             EventType.RECOVERY_COMPLETED,
             run_id=run_id,
@@ -202,6 +205,7 @@ def recover_run(
                 "interrupted": report.interrupted_tasks,
                 "resumable": report.resumable_tasks,
                 "exhausted": report.exhausted_tasks,
+                "unresolved_side_effects": len(report.unresolved_side_effects),
             },
         )
         return report

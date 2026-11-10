@@ -135,6 +135,7 @@ class Tracer:
         self.recorder = SpanRecorder()
         self._otel_tracer: Any = None
         self._enabled = False
+        self.sampled_out = 0
         if otlp_endpoint:
             self._enabled = self._init_otel()
 
@@ -162,11 +163,36 @@ class Tracer:
             # run, only reduce observability.
             return False
 
+    def _should_sample(self) -> bool:
+        """Decide whether a span is recorded.
+
+        Sampling is deterministic on the service name so that a run's trace
+        shape is reproducible, rather than depending on a random draw.
+        """
+        if self.sample_rate >= 1.0:
+            return True
+        if self.sample_rate <= 0.0:
+            return False
+        import hashlib
+
+        digest = hashlib.sha256(self.service_name.encode()).digest()
+        return (int.from_bytes(digest[:4], "big") / 0xFFFFFFFF) < self.sample_rate
+
     @contextmanager
     def span(
         self, name: str, *, run_id: str | None = None, task_id: str | None = None, **attributes: Any
     ) -> Iterator[Span]:
-        """Record a span, and export it when OpenTelemetry is available."""
+        """Record a span, and export it when OpenTelemetry is available.
+
+        When the sample rate is below 1.0, a span that is not sampled is
+        still returned (so the caller's ``with`` block works) but it is not
+        recorded and not exported.  The count of dropped spans is exposed
+        as :attr:`sampled_out` so the loss is visible rather than silent.
+        """
+        if not self._should_sample():
+            self.sampled_out += 1
+            yield Span(name=name, span_id="sampled-out", attributes=dict(attributes))
+            return
         span = self.recorder.start(
             name, run_id=run_id, task_id=task_id, **attributes
         )

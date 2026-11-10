@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import RunConfig
+from ..errors import ConflictError
 from ..models.evidence import CheckRecord
 from ..store.events import EventLog, EventType
 from ..workspace.worktree import Worktree, WorktreeManager, git
@@ -38,6 +39,25 @@ class IntegrationEngine:
     config: RunConfig
     worktrees: WorktreeManager
     log: EventLog | None = None
+    integration_root: Path | None = None
+
+    def __post_init__(self) -> None:
+        """Use a dedicated worktree root when one is configured.
+
+        Integration worktrees are conceptually separate from the per-task
+        ones: they are the "staging area" where the combined change is
+        assembled, and keeping them apart makes it easy to find, inspect
+        or throw away the staged result.
+        """
+        if self.integration_root is None:
+            root = self.config.workspace.integration_root
+            if root:
+                self.integration_root = Path(root)
+        if self.integration_root is not None:
+            self.integration_root.mkdir(parents=True, exist_ok=True)
+            self.worktrees = WorktreeManager(
+                self.worktrees.repo_path, self.integration_root
+            )
 
     # ------------------------------------------------------------ analysis
 
@@ -154,6 +174,10 @@ class IntegrationEngine:
             current_head = base_revision
             head_trees: dict[str, str] = {}
             base_tree = self.worktrees.tree_of(base_revision)
+            stale_patches = {
+                p.artifact_id
+                for p in self.detect_stale(patches, base_revision, dependencies)
+            }
             for patch in patches:
                 expected_tree = base_tree
                 for dependency in (dependencies or {}).get(patch.task_id, ()):
@@ -162,7 +186,9 @@ class IntegrationEngine:
                         expected_tree = candidate
                         break
                 actual_tree = patch.base_tree or self.worktrees.tree_of(patch.base_revision)
-                if actual_tree and expected_tree and actual_tree != expected_tree:
+                if patch.artifact_id in stale_patches or (
+                    actual_tree and expected_tree and actual_tree != expected_tree
+                ):
                     result.conflicts.append(
                         ConflictRecord(
                             task_id=patch.task_id,
@@ -207,7 +233,6 @@ class IntegrationEngine:
                 )
                 self._log_conflicts(run_id, task_id, result)
                 return result
-
             if run_checks:
                 record = await self._run_integration_checks(workspace.path)
                 result.check_output = record.stdout_excerpt
@@ -320,6 +345,19 @@ class IntegrationEngine:
                 run_id=run_id,
                 task_id=task_id,
                 payload=conflict.to_dict(),
+            )
+
+    def raise_for_conflicts(self, result: IntegrationResult) -> None:
+        """Raise :class:`ConflictError` if the integration produced conflicts.
+
+        The engine itself returns a result rather than raising, because a
+        conflict is an *outcome* the orchestrator must record and report.
+        This method exists for callers that want the exception form.
+        """
+        if result.conflicts:
+            raise ConflictError(
+                result.error or "the patches could not be combined",
+                conflicts=[c.to_dict() for c in result.conflicts],
             )
 
     # ------------------------------------------------------- review bundles

@@ -78,10 +78,6 @@ class ProviderRouter:
     def primary(self) -> ModelProvider:
         return self._providers[0]
 
-    @property
-    def configs(self) -> list[ProviderConfig]:
-        return list(self._configs)
-
     async def complete(self, request: object) -> object:
         from ..errors import TransientModelError
 

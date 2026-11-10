@@ -78,7 +78,3 @@ def worktree_id() -> str:
 
 def span_id() -> str:
     return new_id("spn")
-
-
-def attempt_id() -> str:
-    return new_id("att")

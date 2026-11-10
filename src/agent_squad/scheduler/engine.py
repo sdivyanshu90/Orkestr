@@ -231,11 +231,11 @@ class Scheduler:
                         error_class="dependency",
                     )
 
+                ready = self.graph.ready_tasks(completed, blocked)
                 ready = [
-                    self.graph.tasks[tid]
-                    for tid in sorted(pending)
-                    if all(dep in completed for dep in self.graph.tasks[tid].depends_on)
-                    and tid not in blocked
+                    t
+                    for t in ready
+                    if t.id in pending
                 ]
                 ready.sort(key=lambda t: (-t.priority, t.id))
 

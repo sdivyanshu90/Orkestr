@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig
+from ..errors import VerificationError
 from ..models.evidence import CheckRecord, CriterionState, EvidencePackage
 from ..models.task import AcceptanceCriterion, TaskSpec
 from ..store.events import EventLog, EventType
@@ -84,6 +85,12 @@ class VerificationGate:
         self._config = config
         self._state = state
         self._log = log
+        self._failures: list[VerificationError] = []
+
+    @property
+    def failures(self) -> list[VerificationError]:
+        """The verification failures observed so far."""
+        return list(self._failures)
 
     async def verify_task(
         self,
@@ -218,3 +225,13 @@ class VerificationGate:
         )
         if self._state is not None:
             self._state.set_verification(task.id, report.to_dict())
+        if not report.passed and report.failed:
+            # The failure taxonomy must reflect reality: a failed gate is a
+            # verification failure, not a generic one.
+            self._failures.append(
+                VerificationError(
+                    report.error or "the acceptance checks failed",
+                    task_id=task.id,
+                    failed_criteria=tuple(report.failed),
+                )
+            )

@@ -36,7 +36,7 @@ from ..errors import (
 )
 from ..models.artifact import Provenance
 from ..models.evidence import ChangedFile, EvidencePackage
-from ..models.message import Message, MessageKind, make_message
+from ..models.message import Message
 from ..providers.base import (
     ChatMessage,
     ModelProvider,
@@ -111,6 +111,7 @@ class AgentLoop:
     on_policy_decision: Any = None
     tracer: Any = None
     on_approval_state: Any = None
+    provider_scope: str = "provider:default"
 
     async def run(
         self,
@@ -147,7 +148,7 @@ class AgentLoop:
                 # which is known at this point.
                 if self.budget is not None:
                     projected = sum(estimate_tokens(m.content) for m in messages)
-                    for scope in (self.budget_scope, "run"):
+                    for scope in (self.budget_scope, "run", self.provider_scope):
                         self.budget.check(scope, extra_tokens=projected)
 
                 request = ModelRequest(
@@ -506,33 +507,9 @@ def build_provenance(
     )
 
 
-def publish_progress(
-    bus: MessageBus | None,
-    *,
-    run_id: str,
-    task_id: str,
-    sender: str,
-    recipient: str,
-    stage: str,
-    percent: float = 0.0,
-) -> Message | None:
-    if bus is None:
-        return None
-    return make_message(
-        MessageKind.PROGRESS,
-        run_id=run_id,
-        sender=sender,
-        recipient=recipient,
-        task_id=task_id,
-        percent=percent,
-        stage=stage,
-    )
-
-
 __all__ = [
     "SYSTEM_PROMPT",
     "AgentLoop",
     "WorkerResult",
     "build_provenance",
-    "publish_progress",
 ]
