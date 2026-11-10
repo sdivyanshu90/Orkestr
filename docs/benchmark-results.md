@@ -1,7 +1,7 @@
 # Benchmark results
 
 **Status: measured.** Every number below was produced by
-`agent_squad benchmark --suite full --trials 3` on the development host and
+`agent-squad benchmark --suite full --trials 3` on the development host and
 is reproducible from `benchmarks/results/suite-full-3trials.json`.
 
 Read [`docs/benchmark-methodology.md`](benchmark-methodology.md) first,
@@ -19,7 +19,7 @@ dressing it up.
 | Trials per (scenario, strategy) | 3 |
 | Total runs | 96 |
 | Provider | deterministic mock (`mock-deterministic-v1`) |
-| Wall-clock duration of the suite | 47.5 s |
+| Wall-clock duration of the suite | 42.9 s |
 | Machine | single Linux host, Python 3.14 |
 
 ---
@@ -34,7 +34,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4622 | 0.2130 |
+| Wall-clock (s) | 0.4252 | 0.1725 |
 | Tokens used | 2267.4 | 984.9 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -48,7 +48,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4751 | 0.2520 |
+| Wall-clock (s) | 0.4312 | 0.1796 |
 | Tokens used | 2271.1 | 986.7 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -60,7 +60,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.5033 | 0.2648 |
+| Wall-clock (s) | 0.4256 | 0.1719 |
 | Tokens used | 2271.9 | 986.8 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -72,7 +72,7 @@ standard deviation across those runs.
 | Metric | Mean | Std. dev. |
 |---|---:|---:|
 | Verified completion rate | 1.0000 | 0.0000 |
-| Wall-clock (s) | 0.4604 | 0.2097 |
+| Wall-clock (s) | 0.4286 | 0.1694 |
 | Tokens used | 2269.1 | 987.2 |
 | Cost (USD) | 0.0000 | 0.0000 |
 | Tool calls | 2.25 | 1.11 |
@@ -99,24 +99,26 @@ planned to succeed does succeed. The experiment therefore measures whether
 *orchestration* changes outcomes; it cannot measure whether orchestration
 changes the *difficulty* of the work.
 
-### 3.2 Multi-agent execution was marginally slower, not faster
+### 3.2 The wall-clock differences are indistinguishable from noise
 
 | Comparison | Baseline (`single`) | Candidate | Difference | Within 1 s.d.? |
 |---|---:|---:|---:|:---:|
-| `static_two` wall-clock | 0.4622 s | 0.4751 s | **+2.8 %** | yes (s.d. ≈ 0.21–0.25) |
-| `static_four` wall-clock | 0.4622 s | 0.5033 s | **+8.9 %** | yes |
-| `adaptive` wall-clock | 0.4622 s | 0.4604 s | −0.4 % | yes |
+| `static_two` wall-clock | 0.4252 s | 0.4312 s | **+1.4 %** | yes (s.d. ≈ 0.17) |
+| `static_four` wall-clock | 0.4252 s | 0.4256 s | **+0.1 %** | yes |
+| `adaptive` wall-clock | 0.4252 s | 0.4286 s | **+0.8 %** | yes |
 
-Every difference is well inside one standard deviation. **No strategy is
-demonstrably faster or slower than the baseline in this experiment.**
+The standard deviation across runs (0.17 s) is roughly **40 % of the mean**
+(0.43 s). Every difference between strategies is one to two orders of
+magnitude smaller than that spread. **No strategy is demonstrably faster or
+slower than the baseline in this experiment**, and the correct reading of
+this table is "no effect was detectable", not "multi-agent is 1.4 % slower".
 
-The direction is nevertheless consistent: fixed fan-out strategies were
-slightly *worse* than the baseline, and the adaptive strategy — which chose
-2 workers and declined to fan out to 4 on narrow graphs — was closest to
-it. That is the behaviour the selector is designed to produce, and it is
-weak evidence that the heuristic is doing something sensible.
+Two of the six comparisons per strategy are reported by the harness as
+*unchanged* (the verified completion rate and the tool-call count are
+identical), and the harness distinguishes that from *worse* rather than
+folding the two together.
 
-### 3.3 Coordination overhead was measurable but small
+### 3.3 Coordination overhead was measurable but tiny
 
 | Metric | `single` | `static_two` | `static_four` | `adaptive` |
 |---|---:|---:|---:|---:|
@@ -134,31 +136,35 @@ per-worker context duplication term in the coordination model
 (`context_duplication_tokens`, default 1500) is not exercised by a provider
 with no context cost.
 
-### 3.4 The coordination cost was concentrated where the theory predicts
-
-Per-scenario wall-clock means (3 trials each):
+### 3.4 Per-scenario wall-clock means (3 trials each)
 
 | Scenario | `single` | `static_two` | `static_four` | `adaptive` |
 |---|---:|---:|---:|---:|
-| `independent_parallel` | 0.401 | 0.402 | 0.407 | 0.398 |
-| `tightly_coupled` | **0.713** | **0.968** | **0.988** | 0.844 |
-| `multi_file_refactor` | 0.373 | 0.381 | 0.435 | 0.378 |
-| `bug_fix_regression` | 0.819 | 0.676 | 0.807 | 0.679 |
-| `integration_conflict` | 0.124 | 0.126 | 0.124 | 0.124 |
-| `failing_worker` | 0.414 | 0.403 | 0.405 | 0.404 |
-| `single_agent_preferred` | 0.349 | 0.342 | 0.357 | 0.356 |
-| `meaningful_parallel` | 0.503 | 0.502 | 0.503 | 0.500 |
+| `independent_parallel` | 0.382 | 0.366 | 0.379 | 0.391 |
+| `tightly_coupled` | 0.656 | 0.672 | 0.645 | 0.657 |
+| `multi_file_refactor` | 0.339 | 0.335 | 0.339 | 0.336 |
+| `bug_fix_regression` | 0.663 | 0.686 | 0.680 | 0.647 |
+| `integration_conflict` | 0.118 | 0.114 | 0.117 | 0.117 |
+| `failing_worker` | 0.391 | 0.412 | 0.402 | 0.417 |
+| `single_agent_preferred` | 0.351 | 0.374 | 0.365 | 0.359 |
+| `meaningful_parallel` | 0.501 | 0.490 | 0.478 | 0.506 |
 
-The **tightly coupled** scenario is the clearest signal: the baseline takes
-0.713 s, the fixed two-worker strategy takes 0.968 s — **36 % slower**. The
-work is a chain (implement → test); fanning it out across two workers adds
-scheduling, worktree and integration work without adding parallelism. The
-adaptive strategy, which reads the graph width and selects 1–2 workers,
-lands at 0.844 s — between the two.
+Two observations:
 
-`independent_parallel` and `meaningful_parallel` show no benefit from
-fan-out, which is expected under the zero-latency provider (§7 of the
-methodology): there is no model time to overlap.
+- **The scenarios are not distinguished by strategy.** The spread within a
+  row (e.g. `meaningful_parallel`: 0.478–0.506, a 6 % range) is the same
+  size as the spread across strategies, and both are dwarfed by the
+  between-scenario spread (0.118–0.686). The dominant variable is the
+  scenario, not the orchestration strategy.
+- **`integration_conflict` is much faster than everything else** (0.118 s)
+  because the run aborts at the integration boundary instead of running the
+  full test suite. Time is not a proxy for success — a run that fails
+  early can be the fastest run in the suite.
+
+An earlier revision of this report claimed a 36 % penalty for fixed fan-out
+on the tightly coupled scenario. That figure came from a run made while the
+integration engine still mis-classified parallel patches as stale, which
+short-circuited those runs. The measurement above supersedes it.
 
 ### 3.5 Integration conflicts are detected, and they are not free
 
@@ -170,10 +176,6 @@ the combination could not be applied.
 This is the central claim of the verification design, and it is confirmed
 empirically: *patches that individually pass can fail together*, and a
 system that only trusted per-worker summaries would have reported success.
-
-Note that the conflict scenario's wall-clock (0.124 s) is much *lower* than
-the other scenarios: the run aborts at the integration boundary instead of
-running the full test suite. Time is not a proxy for success.
 
 ### 3.6 The failing worker was retried and the work still completed
 
@@ -195,8 +197,7 @@ symlink, and to push without approval, and asserts that each is refused.
 ## 4. What the results do **not** establish
 
 1. **They do not show that multi-agent orchestration helps.** In this
-   experiment it did not. The measured differences in wall-clock time are
-   within noise and consistently slightly unfavourable.
+   experiment it did not, and the difference was not even measurable.
 2. **They do not show a speed-up.** The provider has no latency, so there
    is no model time to parallelise. Demonstrating a speed-up requires a
    provider with realistic latency — see methodology §7.
@@ -221,14 +222,31 @@ experiment is:
 
 | DAG parallel width | Theoretical speed-up available | Observed speed-up |
 |---|---|---|
-| 1 (`tightly_coupled`, `bug_fix_regression`) | none | none (slight loss) |
+| 1 (`tightly_coupled`, `bug_fix_regression`) | none | none measurable |
 | 2 (`independent_parallel`) | 2× | none measurable |
 | 4 (`meaningful_parallel`) | 4× | none measurable |
 
 The theoretical speed-up is real; the *realised* speed-up is not
 observable, because the critical path in this benchmark is dominated by
-non-model work. The honest statement is: **the DAG parallelism was
-available but the workload offered nothing to overlap.**
+non-model work (git worktree creation, subprocess startup, test execution).
+The honest statement is: **the DAG parallelism was available but the
+workload offered nothing to overlap.**
+
+For reference, the selector's own predictions for the
+`independent_parallel` scenario were:
+
+```
+serial execution estimated at 90.0s; best parallel option uses 2 worker(s) at ~69.8s
+parallelism improves estimated wall-clock time by 22.5%
+```
+
+The prediction of a 22.5 % improvement was **not** observed. The predicted
+speed-up is derived from the *estimated* task durations (60 s each, supplied
+by the plan), while the real work took well under a second; the model is
+therefore predicting an improvement in a quantity that the mock provider
+makes vacuous. This is recorded here rather than quietly omitted: the
+selector's speed-up estimate has not been validated against reality, and
+until a latency-bearing provider exists it cannot be.
 
 ---
 

@@ -43,12 +43,12 @@ decorative.
 | `TransientModelError` | `model` | True | `providers/openai_compat.py:complete` (`httpx.TimeoutException`, `httpx.HTTPError`, status 408/409/425/429/5xx), `providers/anthropic.py:complete` (same), `providers/mock.py:complete` (injected failures) | Provider fallback first (`providers/registry.py:ProviderRouter.complete` tries the next provider only for `TransientModelError`), then task-level retry | `FAILED` → `READY` → `RUNNING` while attempts remain |
 | `ToolError` | `tool` | False | `sandbox/limits.py:Sandbox.check_executable` (executable not on the allow-list), `sandbox/limits.py:Sandbox.run` (empty command, missing cwd, spawn failure), `tools/base.py:ToolContext.resolve` (path escapes the workspace), `verification/checks.py:_resolve` | **Retried** (the class says not retryable; the scheduler ignores that) | `FAILED` → `READY` → `RUNNING` while attempts remain |
 | `ConflictError` | `conflict` | False | **Never raised.** Conflicts are recorded as `ConflictRecord` objects in `IntegrationResult` by `integration/engine.py:IntegrationEngine.detect_overlaps` and `IntegrationEngine.integrate` | n/a | The *integration* fails; individual tasks keep their own statuses |
-| `VerificationError` | `verification` | False | **Never raised.** `verification/gate.py:VerificationGate.verify_task` returns a `VerificationReport(passed=False, ...)` instead of raising | Verification failures are **always** retried while attempts remain (`scheduler/engine.py:392` sets `retryable = True` unconditionally) | `FAILED` with `error_class="verification"` → `READY` → `RUNNING` |
+| `VerificationError` | `verification` | False | **Never raised.** `verification/gate.py:VerificationGate.verify_task` returns a `VerificationReport(passed=False, ...)` instead of raising | Verification failures are **always** retried while attempts remain (`scheduler/engine.py:400` sets `retryable = True` unconditionally) | `FAILED` with `error_class="verification"` → `READY` → `RUNNING` |
 | `CancelledError` | `cancelled` | False | `agents/base.py:AgentLoop.run` (lines 138-139 and 209-210) when the cancellation token is set; converted to `error_class="cancelled"` at lines 239-240 | The scheduler's cancellation check at the top of the retry loop returns `CANCELLED` before another attempt starts, so it is not retried *provided the same token stays set* | `CANCELLED` (via `Scheduler._cancel_task`); if the token were cleared, `"cancelled"` is not in the non-retryable set and the attempt would be retried as a plain failure |
 | `TimeoutError_` | `timeout` | True | **Never raised.** The timeout paths use the builtin `asyncio.TimeoutError` | Handled by the scheduler's dedicated timeout branch | `TIMED_OUT` → `RETRY_SCHEDULED` → `READY` while attempts remain, else `TIMED_OUT` |
 | `StaleAttemptError` | `stale` | False | `store/state.py:StateStore.transition_task` (lines 332-339) when the caller's `attempt` differs from the stored `state.attempt` | Not retried; the scheduler catches it at five call sites | The rejected write does not change the stored state. At `scheduler/engine.py:271-274` the scheduler returns its default `FAILED` outcome; at lines 301, 327, 349, 392 and 421 it suppresses the error with `contextlib.suppress(StaleAttemptError)` and still returns the status it intended |
 | `InfrastructureError` | `infrastructure` | True | `store/db.py:Database.execute` (sqlite error), `artifacts/store.py:ArtifactStore.put` (write failure), `artifacts/store.py:ArtifactStore.read` (missing blob or failed integrity check), `workspace/worktree.py:git` → `GitError` (git command failed, repository has no commits) | **Retried** (`"infrastructure"` is not in the non-retryable set) | `FAILED` with `error_class="infrastructure"` (`agents/runner.py:90-98`) → `READY` → `RUNNING` |
-| `AgentSquadError` subclasses raised outside the taxonomy | varies | varies | e.g. a bare `Exception` escaping the agent loop is caught by `agents/runner.py:152-159` and recorded as `error_class="unknown"` | Retried | `FAILED` → `READY` → `RUNNING` |
+| `AgentSquadError` subclasses raised outside the taxonomy | varies | varies | e.g. a bare `Exception` escaping the agent loop is caught by `agents/runner.py:165-172` and recorded as `error_class="unknown"` | Retried | `FAILED` → `READY` → `RUNNING` |
 
 ### 1.3 Failures that happen before the scheduler starts
 
@@ -118,7 +118,7 @@ expressed in the state machine.
 
 ### 2.2 Success is conditional on verification
 
-`Scheduler._verify` (`scheduler/engine.py:448-468`) returns `None` when the
+`Scheduler._verify` (`scheduler/engine.py:495-515`) returns `None` when the
 task has no acceptance criteria or no worktree path. In that case the task
 transitions straight to `SUCCEEDED` with no verification performed and
 `verification=None` in the outcome. A task whose criteria are all advisory
@@ -276,7 +276,7 @@ Two caveats:
   that *are* applied are `TaskSpec.budget.max_tokens` and
   `max_cost_usd`, set on the task scope by
   `agents/runner.py:WorkerRunner.execute`. See §9 item 19.
-- **Worktree commits.** `agents/runner.py:180-186` commits the worktree
+- **Worktree commits.** `agents/runner.py:186-201` commits the worktree
   before the patch artifact is written. A crash in between leaves a commit
   in the worktree with no artifact referencing it.
 - **File writes.** `tools/fs.py:WriteFileTool.invoke` writes to
@@ -295,8 +295,8 @@ What exists instead:
 - **The attempt number is the de-facto key component.** The durable record
   of "attempt N started" and "attempt N finished" is the event pair
   `TASK_ATTEMPT_STARTED` / `TASK_ATTEMPT_FINISHED`, both carrying
-  `attempt` (`store/state.py:306-314` and `scheduler/engine.py:349-360`,
-  `:417-429`).
+  `attempt` (`store/state.py:415-423` and `scheduler/engine.py:357-368`,
+  `:424-436`).
 - `recovery.verify_side_effects` reconstructs a key at read time as
   `f"{task_id}#{attempt}"` and returns every attempt that started but never
   finished (`recovery.py:212-249`). It is a report, not a stored key.
@@ -611,7 +611,7 @@ rejects a stale or duplicate `version` for a given
   than raising.
 
 Dispatch happens after the lock is released
-(`agents/messaging.py:83-95`), so two messages published concurrently are
+(`agents/messaging.py:83-96`), so two messages published concurrently are
 validated serially but their handlers run concurrently and can interleave.
 
 `agents/runner.py:WorkerRunner._publish_artifact` writes an
