@@ -22,7 +22,7 @@ import pytest
 from agent_squad.agents.base import AgentLoop
 from agent_squad.config import RunConfig
 from agent_squad.models.task import Role
-from agent_squad.providers.base import ChatMessage, ModelRequest, ModelResponse, ToolCall
+from agent_squad.providers.base import ModelRequest, ModelResponse, ToolCall
 from agent_squad.providers.mock import MockProvider
 from agent_squad.security.capabilities import capabilities_for_role
 from agent_squad.tools.base import ToolContext, ToolRegistry
