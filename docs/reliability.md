@@ -44,9 +44,9 @@ decorative.
 | `ToolError` | `tool` | False | `sandbox/limits.py:Sandbox.check_executable` (executable not on the allow-list), `sandbox/limits.py:Sandbox.run` (empty command, missing cwd, spawn failure), `tools/base.py:ToolContext.resolve` (path escapes the workspace), `verification/checks.py:_resolve` | **Retried** (the class says not retryable; the scheduler ignores that) | `FAILED` → `READY` → `RUNNING` while attempts remain |
 | `ConflictError` | `conflict` | False | **Never raised.** Conflicts are recorded as `ConflictRecord` objects in `IntegrationResult` by `integration/engine.py:IntegrationEngine.detect_overlaps` and `IntegrationEngine.integrate` | n/a | The *integration* fails; individual tasks keep their own statuses |
 | `VerificationError` | `verification` | False | **Never raised.** `verification/gate.py:VerificationGate.verify_task` returns a `VerificationReport(passed=False, ...)` instead of raising | Verification failures are **always** retried while attempts remain (`scheduler/engine.py:392` sets `retryable = True` unconditionally) | `FAILED` with `error_class="verification"` → `READY` → `RUNNING` |
-| `CancelledError` | `cancelled` | False | `agents/base.py:AgentLoop.run` (lines 133-134 and 194-195) when the cancellation token is set; converted to `error_class="cancelled"` at line 224-225 | The scheduler's cancellation check at the top of the retry loop returns `CANCELLED` before another attempt starts, so it is not retried *provided the same token stays set* | `CANCELLED` (via `Scheduler._cancel_task`); if the token were cleared, `"cancelled"` is not in the non-retryable set and the attempt would be retried as a plain failure |
+| `CancelledError` | `cancelled` | False | `agents/base.py:AgentLoop.run` (lines 138-139 and 209-210) when the cancellation token is set; converted to `error_class="cancelled"` at lines 239-240 | The scheduler's cancellation check at the top of the retry loop returns `CANCELLED` before another attempt starts, so it is not retried *provided the same token stays set* | `CANCELLED` (via `Scheduler._cancel_task`); if the token were cleared, `"cancelled"` is not in the non-retryable set and the attempt would be retried as a plain failure |
 | `TimeoutError_` | `timeout` | True | **Never raised.** The timeout paths use the builtin `asyncio.TimeoutError` | Handled by the scheduler's dedicated timeout branch | `TIMED_OUT` → `RETRY_SCHEDULED` → `READY` while attempts remain, else `TIMED_OUT` |
-| `StaleAttemptError` | `stale` | False | `store/state.py:StateStore.transition_task` (lines 223-230) when the caller's `attempt` differs from the stored `state.attempt` | Not retried; the scheduler catches it at five call sites | The rejected write does not change the stored state. At `scheduler/engine.py:259-260` the scheduler returns its default `FAILED` outcome; at lines 295, 323, 347, 390 and 414 it swallows the error and still returns the status it intended |
+| `StaleAttemptError` | `stale` | False | `store/state.py:StateStore.transition_task` (lines 332-339) when the caller's `attempt` differs from the stored `state.attempt` | Not retried; the scheduler catches it at five call sites | The rejected write does not change the stored state. At `scheduler/engine.py:271-274` the scheduler returns its default `FAILED` outcome; at lines 301, 327, 349, 392 and 421 it suppresses the error with `contextlib.suppress(StaleAttemptError)` and still returns the status it intended |
 | `InfrastructureError` | `infrastructure` | True | `store/db.py:Database.execute` (sqlite error), `artifacts/store.py:ArtifactStore.put` (write failure), `artifacts/store.py:ArtifactStore.read` (missing blob or failed integrity check), `workspace/worktree.py:git` → `GitError` (git command failed, repository has no commits) | **Retried** (`"infrastructure"` is not in the non-retryable set) | `FAILED` with `error_class="infrastructure"` (`agents/runner.py:90-98`) → `READY` → `RUNNING` |
 | `AgentSquadError` subclasses raised outside the taxonomy | varies | varies | e.g. a bare `Exception` escaping the agent loop is caught by `agents/runner.py:152-159` and recorded as `error_class="unknown"` | Retried | `FAILED` → `READY` → `RUNNING` |
 
@@ -81,6 +81,21 @@ PENDING ──► READY ──► RUNNING ──► SUCCEEDED
    └──► CANCELLED
 ```
 
+Two further edges were added to `models/task.py:LEGAL_TRANSITIONS` and are
+not drawn above:
+
+```
+RUNNING ──► READY    (recovery re-queues an interrupted task)
+RUNNING ──► BLOCKED  (a prerequisite failed)
+```
+
+`TaskStatus.READY` and `TaskStatus.BLOCKED` are now both reachable from
+`TaskStatus.RUNNING`. The first is what makes recovery able to return an
+interrupted task to the ready queue at all — without it, the
+`RUNNING → READY` move that `recovery.py:recover_run` attempts would have
+been rejected by `assert_transition` and the task would have been left
+`RUNNING`. The second allows a running task to be blocked.
+
 `SUCCEEDED` and `CANCELLED` are terminal (`models/task.py:TERMINAL_STATUSES`).
 `FAILED` and `TIMED_OUT` are **not** terminal: `FAILED → READY` and
 `TIMED_OUT → RETRY_SCHEDULED → READY` are legal, which is how retries are
@@ -90,16 +105,16 @@ expressed in the state machine.
 
 | Failure | Path in the state machine | Code |
 | --- | --- | --- |
-| Worker returned `ok=False` (model error, tool error, budget, cancellation, unknown) | `RUNNING → FAILED`; then `FAILED → READY` if the error class is retryable and attempts remain | `scheduler/engine.py:338-375` |
-| Task deadline elapsed | `RUNNING → TIMED_OUT`; then `TIMED_OUT → RETRY_SCHEDULED → READY` | `scheduler/engine.py:286-311` |
-| An unexpected exception escaped the worker | `RUNNING → FAILED`; then `FAILED → READY` | `scheduler/engine.py:313-336` |
-| Acceptance criteria failed | `RUNNING → FAILED` (error class `verification`); then `FAILED → READY` | `scheduler/engine.py:381-410` |
-| A prerequisite task failed | `PENDING → BLOCKED` for every transitive dependent | `scheduler/engine.py:157-169` via `dag/graph.py:TaskGraph.blocked_by_failure` |
-| Cancellation requested | `PENDING`/`READY`/`RUNNING`/`RETRY_SCHEDULED`/`FAILED`/`TIMED_OUT`/`BLOCKED` → `CANCELLED` | `scheduler/engine.py:150-154`, `scheduler/engine.py:485-490` |
-| Attempt budget exhausted | The task remains `FAILED` (or `TIMED_OUT`); `start_attempt` raises `ValidationError` on the next iteration and `Scheduler._execute` returns `FAILED` with `error_class="validation"` | `store/state.py:365-370`, `scheduler/engine.py:241-254` |
-| Recovery found an interrupted task with budget left | `RUNNING`/`READY` → `READY` | `recovery.py:recover_run` (lines 159-172) |
-| Recovery found an interrupted task with no budget left | `RUNNING`/`READY` → `BLOCKED` with `error_class="recovery"` | `recovery.py:recover_run` (lines 144-158) |
-| `AWAITING_APPROVAL` | **Never entered by the runtime.** It is a legal target from `RUNNING` but nothing transitions into it | — |
+| Worker returned `ok=False` (model error, tool error, budget, cancellation, unknown) | `RUNNING → FAILED`; then `FAILED → READY` if the error class is retryable and attempts remain | `scheduler/engine.py:348-384` |
+| Task deadline elapsed | `RUNNING → TIMED_OUT`; then `TIMED_OUT → RETRY_SCHEDULED → READY` | `scheduler/engine.py:300-323` |
+| An unexpected exception escaped the worker | `RUNNING → FAILED`; then `FAILED → READY` | `scheduler/engine.py:325-346` |
+| Acceptance criteria failed | `RUNNING → FAILED` (error class `verification`); then `FAILED → READY` | `scheduler/engine.py:386-419` |
+| A prerequisite task failed | `PENDING → BLOCKED` for every transitive dependent; `RUNNING → BLOCKED` is also legal but the scheduler does not use it | `scheduler/engine.py:170-183` via `dag/graph.py:TaskGraph.blocked_by_failure` |
+| Cancellation requested | `PENDING`/`READY`/`RUNNING`/`RETRY_SCHEDULED`/`FAILED`/`TIMED_OUT`/`BLOCKED` → `CANCELLED` | `scheduler/engine.py:158-168`, `scheduler/engine.py:532-535` |
+| Attempt budget exhausted | The task remains `FAILED` (or `TIMED_OUT`); `start_attempt` raises `ValidationError` on the next iteration and `Scheduler._execute` returns `FAILED` with `error_class="validation"` | `store/state.py:391-395`, `scheduler/engine.py:255-268` |
+| Recovery found an interrupted task with budget left | `RUNNING`/`READY` → `READY` | `recovery.py:recover_run` (lines 161-168) |
+| Recovery found an interrupted task with no budget left | `RUNNING`/`READY` → `BLOCKED` with `error_class="recovery"` | `recovery.py:recover_run` (lines 145-160) |
+| `AWAITING_APPROVAL` | **Never entered by the runtime.** It is a legal target from `RUNNING` but nothing transitions into it: the approval gate blocks inside the agent loop and surfaces as a tool error with `error_class="policy"` | — |
 
 ### 2.2 Success is conditional on verification
 
@@ -144,7 +159,10 @@ With `jitter_factor = 1.0` the delay is `0.75 * base`; with `jitter_factor =
 `scheduler/engine.py:Scheduler._backoff(attempt, task_id)`:
 
 ```python
-factor = (hash((self.idempotency_prefix, task_id, attempt)) % 1000) / 1000.0
+digest = hashlib.sha256(
+    f"{self.idempotency_prefix}:{task_id}:{attempt}".encode()
+).digest()
+factor = int.from_bytes(digest[:4], "big") / 0xFFFFFFFF
 return self.config.retry.backoff_for(attempt, factor)
 ```
 
@@ -152,25 +170,31 @@ return self.config.retry.backoff_for(attempt, factor)
 `idempotency_prefix=self.config.run_id`).
 
 The intent is to de-synchronise concurrent workers while keeping the delay
-reproducible. **The reproducibility does not hold across processes.** Python
-randomises the hash seed for `str` per process (`PYTHONHASHSEED`), so
-`hash(...)` for a tuple containing strings differs between the original run
-and any later replay in a new process. The factor is stable within one
-process only. A replay therefore reproduces the *decisions* but not the exact
-sleep durations.
+reproducible. **The reproducibility now holds across processes.** The
+earlier revision of this document stated that the factor came from Python's
+built-in `hash()` and was therefore *not* reproducible across processes,
+because the hash seed for `str` is randomised per process
+(`PYTHONHASHSEED`). The implementation now derives the factor from
+`hashlib.sha256` over `"{prefix}:{task_id}:{attempt}"`, which is stable
+across processes and across replays: the same run id, task id and attempt
+always produce the same factor, in this process and in any later one.
+
+*Remediation status: closed.* The jitter is still deterministic rather
+than random — concurrent workers are de-synchronised by content, not by
+luck — so the delay range in §3.1 is unchanged.
 
 ### 3.3 Where the sleep happens, and what it costs
 
 `await asyncio.sleep(self._backoff(attempts, task.id))` appears at four
 places, all inside `Scheduler._execute`:
 
-- `scheduler/engine.py:301` — after a timeout;
-- `scheduler/engine.py:326` — after an unexpected exception;
-- `scheduler/engine.py:363` — after a worker failure;
-- `scheduler/engine.py:394` — after a verification failure.
+- `scheduler/engine.py:313` — after a timeout;
+- `scheduler/engine.py:336` — after an unexpected exception;
+- `scheduler/engine.py:371` — after a worker failure;
+- `scheduler/engine.py:402` — after a verification failure.
 
 `_execute` runs inside an `asyncio.Task` that the scheduler keeps in its
-`running` dictionary (`scheduler/engine.py:182-183`). A task that is sleeping
+`running` dictionary (`scheduler/engine.py:196-197`). A task that is sleeping
 between attempts therefore still occupies one of the `max_workers` slots. If
 every slot is occupied by a task in backoff, no new task starts until a
 sleep finishes, even though nothing is executing.
@@ -179,13 +203,13 @@ sleep finishes, even though nothing is executing.
 
 - The scheduler's attempt cap is
   `min(task.budget.max_attempts, config.retry.max_attempts)`
-  (`scheduler/engine.py:231`).
+  (`scheduler/engine.py:245`).
 - The store's own cap is `TaskState.max_attempts`, set from
-  `spec.budget.max_attempts` at `store/state.py:145` and enforced in
+  `spec.budget.max_attempts` at `store/state.py:164` and enforced in
   `store/state.py:start_attempt` (raises `ValidationError` when
   `state.attempt >= state.max_attempts`).
 - Each attempt increments the stored counter exactly once
-  (`store/state.py:287`) and emits a `TASK_ATTEMPT_STARTED` event.
+  (`store/state.py:396`) and emits a `TASK_ATTEMPT_STARTED` event.
 - There is no retry budget across tasks, no circuit breaker, and no
   exponential backoff on the *provider* call itself: `OpenAICompatProvider.
   complete` and `AnthropicProvider.complete` issue exactly one HTTP request

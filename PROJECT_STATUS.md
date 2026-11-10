@@ -124,13 +124,14 @@ patches, real verification and a successful integration.**
 
 ## Test coverage
 
-159 tests across six suites:
+188 tests across seven suites, all passing in ~10 s:
 
 | Suite | Tests | What it covers |
 |---|---:|---|
-| `tests/unit` | 98 | DAG validation, lifecycle table, policy decisions, budget accounting, evidence schema, message protocol, strategy selection |
-| `tests/integration` | 3 | The full end-to-end run with the deterministic mock provider |
+| `tests/unit` | 104 | DAG validation, lifecycle table, policy decisions, budget accounting, evidence schema, message protocol, strategy selection, artifact provenance and invalidation |
+| `tests/integration` | 17 | The full end-to-end run with the deterministic mock provider, budget enforcement, the live FastAPI surface |
 | `tests/concurrency` | 8 | Parallel execution overlap, dependency ordering, attempt fencing, cancellation, duplicate and stale messages |
+| `tests/chaos` | 9 | Transient and permanent provider failure, worker crash, timeout, malformed model output, stale ownership, duplicate message, conflicting patches, cancellation |
 | `tests/recovery` | 12 | Projection rebuild, interrupted-task recovery, lease awareness, idempotency, side-effect reporting, killed-process recovery, resume |
 | `tests/security` | 24 | Sandbox limits, path traversal, symlink escape, planted binaries, injection detection, secret redaction, policy gating, approval blocking |
 | `tests/evaluation` | 14 | Benchmark reproducibility, metric integrity, variance reporting, negative-result representation |
@@ -141,6 +142,10 @@ Run them with:
 pytest                    # everything
 pytest -m "not slow"      # skip the slow benchmark scenarios
 ```
+
+The suite is hermetic: no network access, no paid model API, and no reliance
+on wall-clock timing for correctness. The concurrency tests assert on the
+*interleaving of recorded events*, not on elapsed milliseconds.
 
 ---
 
@@ -179,10 +184,13 @@ Ordered by how much they limit the project's claims.
 1. **No latency-realistic provider evaluation.** The speed-up half of the
    research question is untested. *Blocker: requires a paid API or a local
    model.* Everything else about the harness is ready for it.
-2. **The chaos/fault-injection harness is partial.** Transient provider
-   failure and crash recovery are covered. Worker crashes, message loss,
-   rate limiting, duplicate events, cancellation races and stale ownership
-   are not systematically injected.
+2. **The chaos/fault-injection harness covers eight of the ten catalogue
+   faults.** Transient provider failure, permanent provider failure, worker
+   crash, timeout, malformed model output, stale ownership, duplicate
+   message, conflicting patches and cancellation are covered. Message loss
+   and stalled-worker detection are declared in the catalogue but have no
+   dedicated test, and the fault catalogue is not yet exposed through a
+   command-line interface.
 3. **The observer layer is only partly wired.** The event log is the
    primary observability surface and is complete; OpenTelemetry export and
    the span recorder are not yet emitted by the scheduler.
@@ -238,15 +246,15 @@ Ordered by how much they limit the project's claims.
 ## Repository map
 
 ```
-src/agent_squad/       ~7,700 lines   the runtime
-tests/                 ~3,000 lines   159 tests
-docs/                  ~9 files       architecture, ADRs, threat model, reliability,
+src/agent_squad/       ~8,000 lines   the runtime
+tests/                 ~3,600 lines   188 tests
+docs/                  12 files       architecture, 6 ADRs, threat model, reliability,
                                      methodology, results, limitations, walkthrough,
                                      failure analysis
 dashboard/             React app      optional web dashboard
 benchmarks/results/    1 file         raw benchmark output
-configs/               examples       TOML configuration examples
-examples/              examples       example task specifications
+configs/               2 files        TOML configuration examples
+examples/              3 files        example task specifications
 ```
 
 ---
@@ -270,7 +278,7 @@ examples/              examples       example task specifications
 | Recorded and inspectable scheduler decisions | Done — `run.strategy_selected` with rationale |
 | Replay support | Done — state replay and control-plane replay |
 | Configurable budget and concurrency policies | Done |
-| Adversarial and fault-injection tests | Partial — see gap 2 |
+| Adversarial and fault-injection tests | Partial — nine chaos tests cover eight catalogue faults; message loss and stalled-worker detection remain |
 | Reproducible benchmark results | Done — 96 runs recorded |
 | Documented measured limitations | Done — `docs/limitations.md`, `docs/benchmark-results.md` |
 | A polished end-to-end demonstration | Done — `README.md` quick start |
