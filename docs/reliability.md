@@ -45,7 +45,7 @@ decorative.
 | `ConflictError` | `conflict` | False | **Never raised.** Conflicts are recorded as `ConflictRecord` objects in `IntegrationResult` by `integration/engine.py:IntegrationEngine.detect_overlaps` and `IntegrationEngine.integrate` | n/a | The *integration* fails; individual tasks keep their own statuses |
 | `VerificationError` | `verification` | False | **Never raised.** `verification/gate.py:VerificationGate.verify_task` returns a `VerificationReport(passed=False, ...)` instead of raising | Verification failures are **always** retried while attempts remain (`scheduler/engine.py:400` sets `retryable = True` unconditionally) | `FAILED` with `error_class="verification"` → `READY` → `RUNNING` |
 | `CancelledError` | `cancelled` | False | `agents/base.py:AgentLoop.run` (lines 138-139 and 209-210) when the cancellation token is set; converted to `error_class="cancelled"` at lines 239-240 | The scheduler's cancellation check at the top of the retry loop returns `CANCELLED` before another attempt starts, so it is not retried *provided the same token stays set* | `CANCELLED` (via `Scheduler._cancel_task`); if the token were cleared, `"cancelled"` is not in the non-retryable set and the attempt would be retried as a plain failure |
-| `TimeoutError_` | `timeout` | True | **Never raised.** The timeout paths use the builtin `asyncio.TimeoutError` | Handled by the scheduler's dedicated timeout branch | `TIMED_OUT` → `RETRY_SCHEDULED` → `READY` while attempts remain, else `TIMED_OUT` |
+| `TimeoutError_` | `timeout` | True | **Never raised.** The timeout paths use the builtin `TimeoutError`, which `asyncio.TimeoutError` aliases since Python 3.11 | Handled by the scheduler's dedicated timeout branch | `TIMED_OUT` → `RETRY_SCHEDULED` → `READY` while attempts remain, else `TIMED_OUT` |
 | `StaleAttemptError` | `stale` | False | `store/state.py:StateStore.transition_task` (lines 332-339) when the caller's `attempt` differs from the stored `state.attempt` | Not retried; the scheduler catches it at five call sites | The rejected write does not change the stored state. At `scheduler/engine.py:271-274` the scheduler returns its default `FAILED` outcome; at lines 301, 327, 349, 392 and 421 it suppresses the error with `contextlib.suppress(StaleAttemptError)` and still returns the status it intended |
 | `InfrastructureError` | `infrastructure` | True | `store/db.py:Database.execute` (sqlite error), `artifacts/store.py:ArtifactStore.put` (write failure), `artifacts/store.py:ArtifactStore.read` (missing blob or failed integrity check), `workspace/worktree.py:git` → `GitError` (git command failed, repository has no commits) | **Retried** (`"infrastructure"` is not in the non-retryable set) | `FAILED` with `error_class="infrastructure"` (`agents/runner.py:90-98`) → `READY` → `RUNNING` |
 | `AgentSquadError` subclasses raised outside the taxonomy | varies | varies | e.g. a bare `Exception` escaping the agent loop is caught by `agents/runner.py:165-172` and recorded as `error_class="unknown"` | Retried | `FAILED` → `READY` → `RUNNING` |
@@ -500,7 +500,7 @@ operation the CLI invokes:
 
 | Deadline | Value | Enforcement | Code |
 | --- | --- | --- | --- |
-| Per-task | `task.budget.deadline_s` or `config.scheduler.default_task_timeout_s` (900 s) | `asyncio.wait_for` around the whole worker execution | `scheduler/engine.py:103-106`, `:279-289` |
+| Per-task | `task.budget.deadline_s` or `config.scheduler.default_task_timeout_s` (900 s) | `asyncio.wait_for` around the whole worker execution | `scheduler/engine.py:104-106`, `:279-289` |
 | Per-command | `config.sandbox.wall_time_s` (120 s) | `asyncio.wait_for(proc.communicate(...))`, then `os.killpg(proc.pid, 9)` and a 5 s grace to reap output | `sandbox/limits.py:229-247` |
 | CPU time | `config.sandbox.cpu_time_s` (60 s) | `RLIMIT_CPU` → `SIGXCPU` | `sandbox/limits.py:_preexec` |
 | Address space / file size | `memory_mb` (2048) / 64 MB | `RLIMIT_AS`, `RLIMIT_FSIZE` | `sandbox/limits.py:_preexec` |
@@ -519,7 +519,7 @@ the wall-clock timeout's `killpg`.
 ### 7.2 Cancellation
 
 `Scheduler.cancellation` is an `asyncio.Event`
-(`scheduler/engine.py:92`). It is passed down
+(`scheduler/engine.py:93`). It is passed down
 `Scheduler._execute` → `WorkerRunner.execute(cancellation=...)` →
 `AgentLoop.run(cancellation=...)`.
 
@@ -675,7 +675,8 @@ Each item names the scenario that breaks it.
    would accept). The whole call fails even though a working fallback is
    configured.
 4. **A cancelled sandboxed command is orphaned.**
-   `sandbox/limits.py:Sandbox.run` catches `asyncio.TimeoutError` but not
+   `sandbox/limits.py:Sandbox.run` catches `TimeoutError` (which is
+   `asyncio.TimeoutError` since Python 3.11) but not
    `asyncio.CancelledError`.
    *Scenario:* a task deadline expires while a `pytest` run is in progress.
    The `wait_for` cancels the coroutine, the `killpg` never executes, and

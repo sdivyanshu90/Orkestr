@@ -10,7 +10,48 @@ was found by a test rather than by inspection, that is stated.
 
 ---
 
-## 1. The mock provider returned the same tool calls forever
+## 4. A parallel patch was wrongly rejected as stale
+
+**Symptom.** Two independent tasks both succeeded and both verified, but the
+integration reported one conflict and failed:
+
+```
+integration passed=False applied=1 conflicts=1
+  conflict stale_patch: patch was produced against tree 6cbfa3f66000
+  but the integration tree is at 1b77ff8dad01
+```
+
+**Cause.** The integration engine decided that a patch was stale by
+comparing the tree the patch was computed against with the integration
+tree's *current* tree. That is the wrong comparison. The integration tree
+changes every time a patch is applied, so the second of two independent
+patches would always look stale.
+
+The rule that was actually needed is about *provenance*, not about the
+current state: a patch is stale when the tree it was computed against is
+not the tree the orchestrator expects it to apply to — the run's base tree
+for an independent task, the dependency's head tree for a dependent one.
+
+**Fix.** The engine now computes the expected base tree from the
+dependency structure and tracks the head tree each applied patch produced.
+
+**Lesson.** "Stale" and "conflicting" are different concepts and they need
+different checks. A stale patch is computed against a tree that no longer
+exists; a conflicting patch is computed against a tree that does exist but
+has been changed in the same place. Conflating them makes every parallel
+patch look like a conflict, and — worse — makes a real conflict look like a
+bookkeeping problem.
+
+This bug also invalidated the first published benchmark results, which had
+been measured while the parallel path was short-circuiting. The results
+were re-measured after the fix, and the earlier "36 % slower on the tightly
+coupled scenario" figure was withdrawn: it was an artefact of the bug, not a
+property of the system. The corrected numbers show no measurable difference
+between strategies.
+
+---
+
+## 5. The mock provider returned the same tool calls forever
 
 **Symptom.** The first end-to-end run never terminated. Every task failed
 after exactly twelve iterations with `agent exceeded the iteration limit`.
@@ -32,7 +73,7 @@ component takes, and silently skips the ones it does not.
 
 ---
 
-## 2. `git diff` does not show untracked files
+## 6. `git diff` does not show untracked files
 
 **Symptom.** A worker that created a brand new module produced an empty
 patch. The task "succeeded", the acceptance criterion `file_exists` passed,
@@ -59,7 +100,7 @@ acceptance criteria instead of reading the worker's summary.
 
 ---
 
-## 3. The commit sha chain broke stacked worktrees
+## 7. The commit sha chain broke stacked worktrees
 
 **Symptom.** After the fix above, only the *first* patch was integrated. The
 dependent task's patch was rejected as stale.
@@ -81,7 +122,7 @@ I have?", the answer is a tree id.
 
 ---
 
-## 4. A deadlock in the budget manager
+## 8. A deadlock in the budget manager
 
 **Symptom.** The unit test suite hung. Not failed — hung, with three tests
 reported and no progress.
@@ -101,7 +142,7 @@ the code now says why the lock is re-entrant, so the next reader does not
 
 ---
 
-## 5. The policy engine was never called
+## 9. The policy engine was never called
 
 **Symptom.** None. Every test passed. The code looked correct.
 
@@ -129,7 +170,7 @@ scoping and approvals depended on it.
 
 ---
 
-## 6. The worktree was removed before verification
+## 10. The worktree was removed before verification
 
 **Symptom.** Discovered by the documentation agent, which noticed that
 worktrees were *never* removed — and then traced why.
@@ -153,7 +194,7 @@ not know that verification was about to happen.
 
 ---
 
-## 7. The tool context could not express "where"
+## 11. The tool context could not express "where"
 
 **Symptom.** The policy engine checked paths against `scope_root` and
 `scope_patterns`, but `ToolContext.scope_patterns` was populated and never
@@ -169,7 +210,7 @@ testing the parts in isolation.
 
 ---
 
-## 8. The recovery path lost the lease
+## 12. The recovery path lost the lease
 
 **Symptom.** A task whose worker was still alive was resumed by the recovery
 path, which could have started a second worker for the same task.
@@ -189,7 +230,7 @@ crash, when the person investigating has the least context.
 
 ---
 
-## 9. `hash()` is salted, so the "deterministic" jitter was not
+## 13. `hash()` is salted, so the "deterministic" jitter was not
 
 **Symptom.** Not a failure — a discrepancy between the code and its
 documentation.
@@ -208,7 +249,7 @@ on it.
 
 ---
 
-## 10. The approval flow existed but was unreachable
+## 14. The approval flow existed but was unreachable
 
 **Symptom.** `StateStore.create_approval` was implemented and stored
 approvals in a table, and the CLI had an `approve` command — but nothing
@@ -229,7 +270,7 @@ never requested, which is how the gap was noticed.
 
 ---
 
-## 11. The benchmark harness crashed on the `adaptive` strategy
+## 15. The benchmark harness crashed on the `adaptive` strategy
 
 **Symptom.** `agent-squad benchmark` aborted with a pydantic
 `ValidationError`: `max_workers` must be ≥ 1.
@@ -245,7 +286,7 @@ was a valid `int`.
 
 ---
 
-## 12. The benchmark produced a result that proved nothing
+## 16. The benchmark produced a result that proved nothing
 
 **Symptom.** Not a crash — a *finding*. The first full benchmark run showed
 every strategy achieving a verified completion rate of 1.0000, with wall
@@ -271,7 +312,7 @@ produce one" is a more valuable output than a fabricated speed-up.
 
 ---
 
-## 13. A fixture that failed for the right reason
+## 17. A fixture that failed for the right reason
 
 **Symptom.** The end-to-end test failed at the `pytest_selector` criterion.
 
@@ -291,7 +332,7 @@ that a failing check is evidence, not an accusation.
 
 ---
 
-## 14. The test suite asserted on wall-clock time
+## 18. The test suite asserted on wall-clock time
 
 **Symptom.** A concurrency test asserting "two workers ran in parallel" was
 flaky.
@@ -308,7 +349,7 @@ test that will be ignored, and then it protects nothing.
 
 ---
 
-## 15. Summary of the recurring patterns
+## 19. Summary of the recurring patterns
 
 | Pattern | Instances | The lesson |
 |---|---|---|
@@ -316,13 +357,21 @@ test that will be ignored, and then it protects nothing.
 | Sentinel values leaking across type boundaries | 11 | `0` meaning "unknown" is a bug waiting to happen. |
 | Identity chosen at the wrong granularity | 3 | Compare content (trees), not history (commits). |
 | Lifetime owned by the wrong component | 6 | The owner of a resource is the one that knows when it is still needed. |
-| A result that appears to answer the question | 12 | "We could not measure this" is a legitimate result. |
+| A result that appears to answer the question | 12, 16 | "We could not measure this" is a legitimate result. |
 | A test asserting on timing | 14 | Assert on interleaving, not duration. |
 | A lock that was not re-entrant | 4 | Nested locking is a design smell. |
+| Two different concepts collapsed into one check | 4 | "Stale" and "conflicting" need different checks. |
 
 The first row dominates. Four of the five most serious problems in this
 project were components that existed, were tested in isolation, and were
 never wired into the path that mattered. That is the strongest practical
 argument for end-to-end tests that exercise the real path — and it is the
-reason the integration, concurrency, recovery and security suites in
+reason the integration, concurrency, recovery, security and chaos suites in
 `tests/` exist at all.
+
+The second pattern worth naming is **the mock provider's blind spot**. The
+deterministic provider exercised the orchestration machinery faithfully
+right up to the integration boundary, and the integration bug lived exactly
+there — past the point where the mock's fidelity stopped. A deterministic
+double is only as good as the paths it reaches; the chaos suite exists to
+push past them.
