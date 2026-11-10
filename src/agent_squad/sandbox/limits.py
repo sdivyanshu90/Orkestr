@@ -125,7 +125,16 @@ class Sandbox:
         self.config = config or SandboxConfig()
         self._unshare = shutil.which("unshare")
 
-    def check_executable(self, executable: str) -> None:
+    def check_executable(self, executable: str, *, workdir: Path | None = None) -> None:
+        """Reject an executable that is not permitted.
+
+        Two conditions must hold:
+
+        * the executable's *name* is on the allow-list; and
+        * the executable does not resolve to a file inside the working
+          directory, so an agent cannot plant its own binary named ``python3``
+          and have it executed in preference to the system one.
+        """
         base = Path(executable).name
         if base not in self.config.allowed_binaries:
             raise ToolError(
@@ -133,6 +142,27 @@ class Sandbox:
                 executable=executable,
                 allowed=list(self.config.allowed_binaries),
             )
+        if workdir is not None:
+            candidate = Path(executable)
+            if not candidate.is_absolute():
+                # A bare name is resolved through PATH, exactly as a shell
+                # would resolve it; only a planted binary inside the working
+                # directory is rejected.
+                found = shutil.which(executable)
+                if found is None:
+                    return
+                candidate = Path(found)
+            try:
+                resolved = candidate.resolve()
+                root = workdir.resolve()
+            except OSError:
+                return
+            if resolved == root or root in resolved.parents:
+                raise ToolError(
+                    "the executable resolves inside the working directory, which "
+                    "would allow a planted binary to be executed",
+                    executable=executable,
+                )
 
     async def run(
         self,
@@ -147,7 +177,7 @@ class Sandbox:
         if not command:
             raise ToolError("empty command")
         argv = tuple(str(part) for part in command)
-        self.check_executable(argv[0])
+        self.check_executable(argv[0], workdir=Path(cwd))
         workdir = Path(cwd)
         if not workdir.exists():
             raise ToolError(f"working directory does not exist: {workdir}", cwd=str(workdir))

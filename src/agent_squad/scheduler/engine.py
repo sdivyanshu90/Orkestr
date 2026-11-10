@@ -123,9 +123,16 @@ class Scheduler:
         """Deterministic jitter derived from the task id.
 
         Real jitter uses randomness; a hash-derived jitter still de-synchronises
-        concurrent workers while remaining reproducible during replay.
+        concurrent workers while remaining reproducible across processes and
+        across replays.  ``hashlib`` is used rather than Python's built-in
+        ``hash`` because the latter is salted per process.
         """
-        factor = (hash((self.idempotency_prefix, task_id, attempt)) % 1000) / 1000.0
+        import hashlib
+
+        digest = hashlib.sha256(
+            f"{self.idempotency_prefix}:{task_id}:{attempt}".encode()
+        ).digest()
+        factor = int.from_bytes(digest[:4], "big") / 0xFFFFFFFF
         return self.config.retry.backoff_for(attempt, factor)
 
     # ----------------------------------------------------------------- run
@@ -148,8 +155,14 @@ class Scheduler:
         try:
             while pending or running:
                 if self.cancellation is not None and self.cancellation.is_set():
-                    for task_id in list(pending):
+                    for task_id in sorted(pending):
                         self._cancel_task(task_id, cancelled)
+                        outcomes[task_id] = TaskOutcome(
+                            task_id=task_id,
+                            status=TaskStatus.CANCELLED,
+                            error="the run was cancelled",
+                            error_class="cancelled",
+                        )
                         pending.discard(task_id)
                     break
 
@@ -358,11 +371,12 @@ class Scheduler:
                         "error_class": result.error_class,
                     },
                 )
-                retryable = result.error_class not in ("policy", "validation", "budget")
+                retryable = self._is_retryable(result)
                 if retryable and attempts < max_attempts:
                     await asyncio.sleep(self._backoff(attempts, task.id))
                     self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
                     continue
+                self._dispose_worktree(task, result, None)
                 return TaskOutcome(
                     task_id=task.id,
                     status=TaskStatus.FAILED,
@@ -378,6 +392,7 @@ class Scheduler:
             report = await self._verify(task, result)
             if result.head_revision:
                 self._task_heads[task.id] = result.head_revision
+            self._dispose_worktree(task, result, report)
             if report is not None and not report.passed:
                 try:
                     self.state.transition_task(
@@ -394,6 +409,7 @@ class Scheduler:
                     await asyncio.sleep(self._backoff(attempts, task.id))
                     self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
                     continue
+                self._dispose_worktree(task, result, report)
                 return TaskOutcome(
                     task_id=task.id,
                     status=TaskStatus.FAILED,
@@ -443,7 +459,47 @@ class Scheduler:
 
         return outcome
 
+    def _dispose_worktree(self, task: TaskSpec, result: Any, report: Any) -> None:
+        """Remove the task's worktree once verification has finished.
+
+        The worktree is kept when the attempt failed, when verification
+        failed, or when the configuration asks for it, so that a failure can
+        be inspected after the fact.
+        """
+        path = getattr(result, "worktree_path", None)
+        if not path:
+            return
+        keep = bool(getattr(self.runner, "keep_worktrees", False))
+        if not result.ok:
+            keep = True
+        if report is not None and not report.passed:
+            keep = True
+        if self.config.workspace.keep_worktrees_on_failure and not result.ok:
+            keep = True
+        if self.config.workspace.keep_worktrees_on_success and result.ok:
+            keep = True
+        cleanup = getattr(self.runner, "cleanup_worktree", None)
+        if cleanup is not None:
+            cleanup(path, keep=keep)
+
     # ---------------------------------------------------------- verification
+
+    @staticmethod
+    def _is_retryable(result: Any) -> bool:
+        """Decide whether a failed attempt is worth repeating.
+
+        The error class recorded by the runtime is authoritative, but the
+        error object itself carries a ``retryable`` flag that distinguishes
+        a permanent provider error (bad credentials) from a transient one
+        (a rate limit).  When the class is unknown the failure is treated as
+        permanent, because retrying a permanent failure only wastes budget.
+        """
+        error_class = (result.error_class or "").lower()
+        if error_class in ("policy", "validation", "budget", "conflict"):
+            return False
+        if error_class in ("model", "tool", "timeout", "infrastructure", "unknown", ""):
+            return True
+        return True
 
     async def _verify(self, task: TaskSpec, result: Any) -> VerificationReport | None:
         """Run the acceptance criteria independently of the worker."""

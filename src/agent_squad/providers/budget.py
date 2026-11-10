@@ -81,7 +81,8 @@ class BudgetManager:
     def __init__(self, config: BudgetConfig, provider_config: ProviderConfig) -> None:
         self._config = config
         self._provider_config = provider_config
-        self._lock = threading.Lock()
+        # Re-entrant: `record` and `check` call `scope` while holding the lock.
+        self._lock = threading.RLock()
         self._scopes: dict[str, ScopeBudget] = {}
 
     # ------------------------------------------------------------- scopes

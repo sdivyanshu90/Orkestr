@@ -101,9 +101,12 @@ class AgentLoop:
     max_turn_tokens: int = 60_000
     max_task_tokens: int | None = None
     cost_limit_usd: float | None = None
+    policy: Any = None
+    approver: Any = None
     on_model_call: Any = None
     on_tool_call: Any = None
     on_usage: Any = None
+    on_policy_decision: Any = None
 
     async def run(
         self,
@@ -161,6 +164,7 @@ class AgentLoop:
                 if self.on_usage is not None:
                     await _maybe_await(
                         self.on_usage(
+                            usage=response.usage,
                             tokens=response.usage.total_tokens,
                             cost_usd=cost,
                             estimated=response.usage.estimated,
@@ -198,7 +202,7 @@ class AgentLoop:
                     if self.on_tool_call is not None:
                         await _maybe_await(
                             self.on_tool_call(
-                                name=call.name,
+                                tool=call.name,
                                 ok=result.ok,
                                 error=result.error,
                             )
@@ -269,6 +273,13 @@ class AgentLoop:
         tool_context: ToolContext,
         capabilities: CapabilitySet,
     ) -> ToolResult:
+        """Authorise and then execute a tool call.
+
+        The policy engine is consulted *before* the tool runs.  A denial is
+        returned to the model as a tool error (so the agent can adapt) but
+        the tool is never executed.  A call that requires human approval is
+        routed to the approver, which blocks until a decision is recorded.
+        """
         tool = self.tools.get(call.name)
         if tool is None:
             return ToolResult(
@@ -276,6 +287,53 @@ class AgentLoop:
                 error=f"unknown tool {call.name!r}",
                 error_class="validation",
             )
+
+        if self.policy is not None:
+            decision = self.policy.authorize(
+                run_id=self.run_id,
+                actor=tool_context.actor,
+                capabilities=capabilities,
+                tool=call.name,
+                arguments=call.arguments,
+                task_id=self.task_id,
+                scope_root=str(tool_context.scope_root or tool_context.workdir),
+                scope_patterns=tool_context.scope_patterns,
+            )
+            if self.on_policy_decision is not None:
+                await _maybe_await(
+                    self.on_policy_decision(
+                        tool=call.name, decision=decision.decision.value, reason=decision.reason
+                    )
+                )
+            if decision.decision.value == "deny":
+                return ToolResult(
+                    ok=False,
+                    error=f"policy denied this call: {decision.reason}",
+                    error_class="policy",
+                )
+            if decision.decision.value == "require_approval":
+                approved = False
+                if self.approver is not None:
+                    approved = await _maybe_await(
+                        self.approver(
+                            action=decision.action or call.name,
+                            rationale=decision.reason,
+                            arguments=list(call.arguments.get("command") or [])
+                            if isinstance(call.arguments.get("command"), (list, tuple))
+                            else [],
+                            task_id=self.task_id,
+                        )
+                    )
+                if not approved:
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            "this action requires human approval, which was not "
+                            f"granted ({decision.action})"
+                        ),
+                        error_class="policy",
+                    )
+
         try:
             return await tool.invoke(call.arguments, tool_context)
         except ToolError as exc:
@@ -298,16 +356,41 @@ class AgentLoop:
 
         The system prompt and the initial task brief are always preserved:
         dropping them would remove the task definition from the model's view.
+
+        Tool results are never dropped on their own.  A ``tool`` message
+        whose ``tool_call_id`` refers to an assistant turn that was removed
+        is meaningless to the provider (and rejected outright by some of
+        them), so assistant turns are removed together with the tool results
+        that answer them.
         """
         total = sum(estimate_tokens(m.content) for m in messages)
         if total <= self.max_turn_tokens:
             return
         keep_head = 2 if len(messages) > 2 else len(messages)
+
         while len(messages) > keep_head + 2:
-            removed = messages.pop(2)
-            total -= estimate_tokens(removed.content)
+            candidate = messages[2]
+            if candidate.role != "assistant" or not candidate.tool_calls:
+                # Not an assistant turn with tool calls: drop it, but first
+                # remove any tool result that would be left orphaned.
+                removed_ids = {
+                    call.id for call in getattr(candidate, "tool_calls", ())
+                }
+                messages.pop(2)
+                total -= estimate_tokens(candidate.content)
+                if removed_ids:
+                    total = self._drop_orphan_tool_results(messages, removed_ids)
+                if total <= self.max_turn_tokens:
+                    break
+                continue
+
+            removed_ids = {call.id for call in candidate.tool_calls}
+            messages.pop(2)
+            total -= estimate_tokens(candidate.content)
+            total = self._drop_orphan_tool_results(messages, removed_ids)
             if total <= self.max_turn_tokens:
                 break
+
         messages.insert(
             2,
             ChatMessage(
@@ -316,19 +399,40 @@ class AgentLoop:
             ),
         )
 
+    @staticmethod
+    def _drop_orphan_tool_results(messages: list[ChatMessage], ids: set[str]) -> int:
+        """Remove tool results whose assistant turn is gone."""
+        removed = 0
+        index = len(messages) - 1
+        while index >= 0:
+            message = messages[index]
+            if message.role == "tool" and message.tool_call_id in ids:
+                removed += estimate_tokens(message.content)
+                messages.pop(index)
+            index -= 1
+        return removed
+
     def _cost(self, usage: Usage) -> float:
         from ..providers.registry import compute_cost
 
         return compute_cost(usage, self.config.provider)
 
 
-async def _maybe_await(value: Any) -> None:
+async def _maybe_await(value: Any) -> Any:
+    """Await ``value`` if it is awaitable, and return the result.
+
+    Hooks may be plain callables or coroutine functions; both are supported,
+    and the result is returned so that a hook can influence control flow
+    (the approval broker relies on this).
+    """
     if hasattr(value, "__await__"):
-        await value
-    elif callable(value):
+        return await value
+    if callable(value):
         result = value()
         if hasattr(result, "__await__"):
-            await result
+            return await result
+        return result
+    return value
 
 
 def build_provenance(

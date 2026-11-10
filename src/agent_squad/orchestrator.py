@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .agents.approval import ApprovalBroker
 from .agents.messaging import MessageBus
 from .agents.runner import WorkerRunner
 from .artifacts.store import ArtifactStore
@@ -37,6 +38,7 @@ from .planning.brief import TaskBrief
 from .planning.inspector import RepoContext, RepositoryInspector
 from .planning.planner import PlanRequest, PlanResult, build_planner
 from .providers.base import ModelProvider
+from .providers.budget import BudgetManager
 from .providers.registry import ProviderRouter, build_providers
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
@@ -118,11 +120,18 @@ class Orchestrator:
         *,
         data_dir: str | Path | None = None,
         provider: ModelProvider | None = None,
+        record_exchanges: bool = True,
+        auto_approve: bool = False,
     ) -> None:
         self.config = config
         base = Path(data_dir or config.data_dir or ".agent-squad").resolve()
         self.paths = RunPaths.for_run(base, config.run_id)
         self.paths.ensure()
+        # Persist the configuration so that the run can be replayed later
+        # without the operator having to reconstruct it.
+        (self.paths.root / "run-config.json").write_text(
+            config.model_dump_json(indent=2), encoding="utf-8"
+        )
 
         self.db = Database(self.paths.database)
         self.log = EventLog(self.db)
@@ -138,9 +147,25 @@ class Orchestrator:
             log=self.log,
             known_recipients=frozenset({SUPERVISOR, "integration"}),
         )
+        self.budget = BudgetManager(config.budget, config.provider)
+        self.budget.set_scope_limits(
+            "run",
+            token_limit=config.budget.run_token_limit,
+            cost_limit_usd=config.budget.run_cost_limit_usd,
+        )
+        self.approver = ApprovalBroker(
+            state=self.state,
+            log=self.log,
+            config=config.approval,
+            run_id=config.run_id,
+            bus=self.bus,
+            auto_approve=auto_approve,
+        )
         self._providers: list[ModelProvider] = []
         self._router: ProviderRouter | None = None
         self._injected_provider = provider
+        self._record_exchanges = record_exchanges
+        self.recorder: Any = None
 
     # ------------------------------------------------------------ providers
 
@@ -151,6 +176,15 @@ class Orchestrator:
                 providers = [self._injected_provider, *build_providers(self.config)[1:]]
             else:
                 providers = build_providers(self.config)
+            if self._record_exchanges:
+                from .replay.recorder import RecordingProvider
+
+                self.recorder = RecordingProvider(
+                    inner=providers[0],
+                    store=self.artifacts,
+                    run_id=self.config.run_id,
+                )
+                providers[0] = self.recorder
             self._router = ProviderRouter(providers, configs)
         return self._router
 
@@ -167,6 +201,7 @@ class Orchestrator:
         description: str = "",
         request_spec: dict[str, Any] | None = None,
         integrate: bool = True,
+        cancellation: asyncio.Event | None = None,
     ) -> RunOutcome:
         """Execute a complete orchestration session."""
         started = time.monotonic()
@@ -252,6 +287,9 @@ class Orchestrator:
             bus=self.bus,
             provider=self.provider,
             supervisor=SUPERVISOR,
+            policy=self.policy,
+            approver=self.approver.request,
+            budget=self.budget,
         )
         scheduler = Scheduler(
             config=self.config,
@@ -265,6 +303,7 @@ class Orchestrator:
             max_workers=max_workers,
             idempotency_prefix=self.config.run_id,
             base_revision=base_revision,
+            cancellation=cancellation,
         )
         summary = await scheduler.run()
         outcomes = dict(scheduler.outcomes)
@@ -373,6 +412,14 @@ class Orchestrator:
     async def aclose(self) -> None:
         for provider in self._providers:
             await provider.aclose()
+        self.db.close()
+
+    def close(self) -> None:
+        """Close the run's resources synchronously.
+
+        Provided for callers that are not running inside an event loop (the
+        CLI's synchronous sub-commands and some tests).
+        """
         self.db.close()
 
     # --------------------------------------------------------------- report

@@ -53,6 +53,9 @@ class WorkerRunner:
     provider: Any = None
     supervisor: str = "supervisor"
     keep_worktrees: bool = False
+    policy: Any = None
+    approver: Any = None
+    budget: Any = None
 
     # ------------------------------------------------------------- registry
 
@@ -140,6 +143,9 @@ class WorkerRunner:
             on_model_call=self._model_call_hook(task, attempt),
             on_tool_call=self._tool_hook(task, attempt),
             on_usage=self._usage_hook(task),
+            policy=self.policy,
+            approver=self.approver,
+            on_policy_decision=self._policy_hook(task, attempt),
         )
 
         try:
@@ -372,26 +378,24 @@ class WorkerRunner:
     # -------------------------------------------------------------- cleanup
 
     def _cleanup(self, task: TaskSpec, worktree: Worktree, result: WorkerResult) -> None:
-        """Dispose of the worktree unless the caller asked to keep it.
+        """Hook point for worktree disposal.
 
-        The default is to keep the worktree when the attempt failed so that
-        the failure can be inspected; the scheduler removes it once
-        verification has run.
+        The worktree is deliberately *not* removed here: the verification
+        gate still has to run the acceptance criteria inside it.  The
+        scheduler disposes of it once verification is complete.
         """
-        keep = self.keep_worktrees
-        if not result.ok:
-            keep = True
-        if self.config.workspace.keep_worktrees_on_failure:
-            keep = True
-        if result.ok and self.config.workspace.keep_worktrees_on_success:
-            keep = True
-        if not keep:
-            self.worktrees.remove(worktree)
+        return None
 
-    def cleanup_worktree(self, worktree_path: str | Path) -> None:
+    def cleanup_worktree(self, worktree_path: str | Path, *, keep: bool = False) -> None:
         """Remove a worktree by path (used by the scheduler after verification)."""
+        if keep:
+            return
         path = Path(worktree_path)
-        git(["worktree", "remove", "--force", "--", str(path)], cwd=self.worktrees.repo_path, check=False)
+        git(
+            ["worktree", "remove", "--force", "--", str(path)],
+            cwd=self.worktrees.repo_path,
+            check=False,
+        )
         if path.exists():
             import shutil
 
@@ -438,7 +442,7 @@ class WorkerRunner:
                 attempt=attempt,
                 actor=task.role.value,
                 payload={
-                    "tool": kwargs.get("name"),
+                    "tool": kwargs.get("tool"),
                     "ok": kwargs.get("ok"),
                     "error": kwargs.get("error"),
                 },
@@ -448,8 +452,36 @@ class WorkerRunner:
 
     def _usage_hook(self, task: TaskSpec):
         async def hook(**kwargs: Any) -> None:
-            self.state.update_usage(
-                task.id, tokens=int(kwargs.get("tokens") or 0), cost_usd=float(kwargs.get("cost_usd") or 0.0)
+            tokens = int(kwargs.get("tokens") or 0)
+            cost = float(kwargs.get("cost_usd") or 0.0)
+            self.state.update_usage(task.id, tokens=tokens, cost_usd=cost)
+            if self.budget is not None:
+                usage = kwargs.get("usage")
+                if usage is None:
+                    from ..providers.base import Usage
+
+                    usage = Usage(input_tokens=0, output_tokens=tokens, estimated=True)
+                self.budget.record(f"task:{task.id}", usage)
+                self.budget.record("run", usage)
+
+        return hook
+
+    def _policy_hook(self, task: TaskSpec, attempt: int):
+        async def hook(**kwargs: Any) -> None:
+            decision = str(kwargs.get("decision") or "")
+            if decision == "allow":
+                return
+            self.log.append(
+                EventType.POLICY_DENIED,
+                run_id=task.run_id,
+                task_id=task.id,
+                attempt=attempt,
+                actor=task.role.value,
+                payload={
+                    "tool": kwargs.get("tool"),
+                    "decision": decision,
+                    "reason": kwargs.get("reason"),
+                },
             )
 
         return hook

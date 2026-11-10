@@ -17,6 +17,9 @@ Legal transitions::
       ├──► BLOCKED ◄────────────┴──────────────────┘  ├────► CANCELLED
       └──► CANCELLED                                    └────► AWAITING_APPROVAL
 
+    RUNNING ──► READY    (recovery: the worker died, the task is re-queued)
+    RUNNING ──► BLOCKED  (a prerequisite failed)
+
     SUCCEEDED, CANCELLED are terminal.
 """
 
@@ -80,6 +83,10 @@ LEGAL_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
             TaskStatus.RETRY_SCHEDULED,
             TaskStatus.AWAITING_APPROVAL,
             TaskStatus.CANCELLED,
+            # A task whose worker died is returned to the ready queue by the
+            # recovery path, and a task whose prerequisite failed is blocked.
+            TaskStatus.READY,
+            TaskStatus.BLOCKED,
         }
     ),
     TaskStatus.RETRY_SCHEDULED: frozenset(

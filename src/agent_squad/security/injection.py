@@ -162,8 +162,9 @@ def contains_untrusted_markers(text: str) -> bool:
 
 
 _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bAIza[0-9A-Za-z\-_]{30,}\b"),
     re.compile(r"-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"),

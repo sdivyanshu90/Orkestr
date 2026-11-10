@@ -398,14 +398,14 @@ def cmd_cancel(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    from ..recovery import recover_run
+    from ..recovery import resume_run
 
-    result = recover_run(args.run_id, data_dir=args.data_dir)
+    result = asyncio.run(resume_run(args.run_id, data_dir=args.data_dir))
     if args.json:
         _print_json(result)
         return 0
     console.print(json.dumps(result, indent=2, default=str))
-    return 0
+    return 0 if result.get("resumed") else 1
 
 
 # ------------------------------------------------------------------ replay

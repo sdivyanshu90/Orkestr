@@ -44,10 +44,15 @@ class RunCommandTool:
         content = result.stdout
         if result.stderr:
             content = f"{content}\n[stderr]\n{result.stderr}"
+        data = result.to_dict()
+        # The isolation note travels with the result so that the fact that
+        # outbound access was *not* prevented is recorded, not just held in
+        # memory.
+        data["isolation_note"] = result.isolation_note
         return ToolResult(
             ok=result.ok,
             content=content,
-            data=result.to_dict(),
+            data=data,
             error=None
             if result.ok
             else (

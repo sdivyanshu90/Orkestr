@@ -33,7 +33,10 @@ class ReadFileTool:
         raw = arguments.get("path")
         if not raw:
             return ToolResult(ok=False, error="path is required", error_class="validation")
-        path = context.resolve(str(raw))
+        try:
+            path = context.resolve(str(raw))
+        except ToolError as exc:
+            return ToolResult(ok=False, error=exc.message, error_class="policy")
         try:
             if path.is_symlink() and not path.resolve().is_relative_to(
                 context.resolve(".")
@@ -84,6 +87,9 @@ class WriteFileTool:
             )
         try:
             path = context.resolve(str(raw))
+        except ToolError as exc:
+            return ToolResult(ok=False, error=exc.message, error_class="policy")
+        try:
             path.parent.mkdir(parents=True, exist_ok=True)
             if mode == "append":
                 with path.open("a", encoding="utf-8") as handle:
@@ -114,6 +120,9 @@ class ListDirTool:
         raw = str(arguments.get("path") or ".")
         try:
             path = context.resolve(raw)
+        except ToolError as exc:
+            return ToolResult(ok=False, error=exc.message, error_class="policy")
+        try:
             if not path.exists():
                 return ToolResult(
                     ok=False, error=f"directory not found: {raw}", error_class="validation"
@@ -157,6 +166,9 @@ class DeletePathTool:
             return ToolResult(ok=False, error="path is required", error_class="validation")
         try:
             path = context.resolve(str(raw))
+        except ToolError as exc:
+            return ToolResult(ok=False, error=exc.message, error_class="policy")
+        try:
             if path.is_dir():
                 import shutil
 

@@ -53,19 +53,31 @@ class StateStore:
     ) -> None:
         now = utcnow().isoformat()
         with self._db.transaction() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO runs(run_id, status, strategy, created_at, "
-                "updated_at, config_json, metadata) VALUES (?,?,?,?,?,?,?)",
-                (
-                    run_id,
-                    RunStatus.CREATED.value,
-                    strategy,
-                    now,
-                    now,
-                    dumps(config or {}),
-                    dumps(metadata or {}),
-                ),
-            )
+            existing = conn.execute(
+                "SELECT run_id FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO runs(run_id, status, strategy, created_at, updated_at, "
+                    "config_json, metadata) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        RunStatus.CREATED.value,
+                        strategy,
+                        now,
+                        now,
+                        dumps(config or {}),
+                        dumps(metadata or {}),
+                    ),
+                )
+            else:
+                # An existing run is never silently replaced: its history
+                # belongs to the run that created it.
+                conn.execute(
+                    "UPDATE runs SET updated_at = ?, config_json = ?, metadata = ? "
+                    "WHERE run_id = ?",
+                    (now, dumps(config or {}), dumps(metadata or {}), run_id),
+                )
             event = self._log.build(
                 EventType.RUN_CREATED,
                 run_id=run_id,
@@ -194,6 +206,95 @@ class StateStore:
             "SELECT spec_json FROM tasks WHERE run_id = ? ORDER BY task_id", (run_id,)
         )
         return [TaskSpec.model_validate(loads(r["spec_json"], {})) for r in rows]
+
+    def rebuild_projection(self, run_id: str) -> dict[str, int]:
+        """Rebuild the task projection by replaying the event log.
+
+        The log is the source of truth.  A crash between the event append and
+        the projection update leaves the projection behind (recoverable); the
+        reverse cannot happen because both happen in one transaction.  This
+        method repairs the former.
+
+        Returns a summary of what was rebuilt.
+        """
+        events = self._log.read(run_id)
+        states: dict[str, TaskState] = {}
+        specs: dict[str, TaskSpec] = {}
+        replayed = 0
+        for event in events:
+            if event.type is EventType.TASK_CREATED:
+                spec_data = event.payload.get("spec") or {}
+                try:
+                    spec = TaskSpec.model_validate(spec_data)
+                except Exception:
+                    continue
+                specs[spec.id] = spec
+                states[spec.id] = TaskState(
+                    id=spec.id,
+                    run_id=spec.run_id,
+                    max_attempts=spec.budget.max_attempts,
+                )
+                replayed += 1
+            elif event.type is EventType.TASK_STATUS_CHANGED and event.task_id:
+                state = states.get(event.task_id)
+                if state is None:
+                    continue
+                target = event.payload.get("to")
+                try:
+                    new_status = TaskStatus(target)
+                except ValueError:
+                    continue
+                if new_status != state.status:
+                    state.status = new_status
+                if event.payload.get("error_class"):
+                    state.error_class = str(event.payload["error_class"])
+                if event.payload.get("error_message"):
+                    state.error_message = str(event.payload["error_message"])
+                if new_status in (
+                    TaskStatus.SUCCEEDED,
+                    TaskStatus.FAILED,
+                    TaskStatus.CANCELLED,
+                    TaskStatus.TIMED_OUT,
+                ):
+                    state.finished_at = event.created_at
+                replayed += 1
+            elif event.type is EventType.TASK_ATTEMPT_STARTED and event.task_id:
+                state = states.get(event.task_id)
+                if state is None:
+                    continue
+                state.attempt = int(event.attempt or state.attempt + 1)
+                state.owner = event.actor
+                state.started_at = event.created_at
+                lease = event.payload.get("lease_expires_at")
+                if isinstance(lease, str) and lease:
+                    try:
+                        state.lease_expires_at = _dt.datetime.fromisoformat(lease)
+                    except ValueError:
+                        state.lease_expires_at = None
+                replayed += 1
+
+        with self._db.transaction() as conn:
+            for task_id, state in states.items():
+                spec = specs.get(task_id)
+                conn.execute(
+                    "INSERT INTO tasks(task_id, run_id, status, attempt, owner, spec_json, "
+                    "state_json, updated_at) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(task_id) DO UPDATE SET status=excluded.status, "
+                    "attempt=excluded.attempt, owner=excluded.owner, "
+                    "spec_json=excluded.spec_json, state_json=excluded.state_json, "
+                    "updated_at=excluded.updated_at",
+                    (
+                        task_id,
+                        state.run_id,
+                        state.status.value,
+                        state.attempt,
+                        state.owner,
+                        spec.model_dump_json() if spec else "{}",
+                        state.model_dump_json(),
+                        state.updated_at.isoformat(),
+                    ),
+                )
+        return {"tasks": len(states), "events_replayed": replayed}
 
     def transition_task(
         self,
