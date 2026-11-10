@@ -262,12 +262,18 @@ Two caveats:
   then died before recording the result will be retried, and the command may
   run again. `scheduler/engine.py:19-24` says so explicitly.
 - **Any model call.** A retried attempt re-issues the request and re-spends
-  tokens. `providers/budget.py:BudgetManager` — which implements run, task and
-  provider token/cost ceilings — is never instantiated outside its own
-  module, so the `BudgetConfig` ceilings (`run_token_limit`,
-  `run_cost_limit_usd`, `per_task_token_limit`, `per_provider_token_limit`)
-  are not enforced anywhere. Only `task.budget.max_tokens` and
-  `task.budget.max_cost_usd` are, in `agents/base.py:170-179`.
+  tokens. `providers/budget.py:BudgetManager` is now instantiated by
+  `orchestrator.py:Orchestrator.__init__` with the run's `BudgetConfig`, and
+  it is enforced: `agents/base.py:AgentLoop.run` calls
+  `budget.check(scope, extra_tokens=projected)` before every model call,
+  for the per-task scope `task:<id>` and for the `"run"` scope, so a call
+  that would cross a ceiling is refused rather than issued and then
+  aborted. The ceilings that remain unenforced are
+  `BudgetConfig.per_task_token_limit`, `per_task_cost_limit_usd` and
+  `per_provider_token_limit`, which no code reads; the per-task ceilings
+  that *are* applied are `TaskSpec.budget.max_tokens` and
+  `max_cost_usd`, set on the task scope by
+  `agents/runner.py:WorkerRunner.execute`. See §9 item 19.
 - **Worktree commits.** `agents/runner.py:180-186` commits the worktree
   before the patch artifact is written. A crash in between leaves a commit
   in the worktree with no artifact referencing it.
@@ -372,13 +378,20 @@ The skew that *is* possible is the one described in §5.3: the `messages` and
 fields (`tokens_used`, `cost_used_usd`, `verification`) are not derivable from
 the log at all.
 
-`store/state.py:rebuild_projection` (lines 198-279) repairs the task
+`store/state.py:rebuild_projection` (lines 218-305) repairs the task
 projection by replaying `TASK_CREATED`, `TASK_STATUS_CHANGED` and
 `TASK_ATTEMPT_STARTED` events. It reconstructs the spec, status, error class
-and message, `finished_at`, attempt number, owner and `started_at`. It does
-**not** reconstruct `tokens_used`, `cost_used_usd`, `verification`,
-`artifacts`, `lease_expires_at`, or the `messages` and `artifacts` tables.
-A rebuild therefore silently discards the accounting.
+and message, `finished_at`, attempt number, owner and `started_at`. It now
+also restores `lease_expires_at` from the `lease_expires_at` payload of the
+`task.attempt_started` event, so a rebuild no longer loses the lease — a
+rebuilt task is therefore still recognised as holding a live lease by
+`recovery.py:recover_run`. It still does **not** reconstruct `tokens_used`,
+`cost_used_usd`, `verification`, `artifacts`, or the `messages` and
+`artifacts` tables. A rebuild therefore still silently discards the
+accounting.
+
+*Remediation status: the lease is restored; the token, cost and
+verification accounting is not.*
 
 ### 5.5 Artifact durability
 
@@ -396,7 +409,9 @@ a manifest that does not parse.
 ## 6. Crash recovery as implemented
 
 `src/agent_squad/recovery.py` implements recovery. It is invoked manually via
-`agent-squad resume` (`cli/main.py:cmd_resume` → `recovery.recover_run`).
+`agent-squad resume` (`cli/main.py:cmd_resume` → `recovery.resume_run`,
+which calls `recovery.recover_run` first and then, if any task turned out to
+be resumable, restarts the scheduler).
 
 ### 6.1 The mechanism
 
@@ -424,22 +439,45 @@ a manifest that does not parse.
 `TASK_ATTEMPT_FINISHED`, with a derived `idempotency_key` of
 `task_id#attempt`.
 
+`recovery.py:resume_run(run_id, data_dir=, force=False)` is the outer
+operation the CLI invokes:
+
+1. calls `recover_run`;
+2. returns `{"resumed": False, ...}` if no task is resumable, if
+   `run-config.json` is missing, or if the store holds no task specs;
+3. re-reads `<run>/run-config.json` into a `RunConfig` and constructs an
+   `Orchestrator` over the run's data directory;
+4. rebuilds the task graph from the specs in the store
+   (`TaskGraph.add_all(specs)` + `graph.link()`);
+5. constructs a `WorkerRunner` and a `Scheduler` over that graph — with the
+   orchestrator's policy engine, approval broker and budget manager — and
+   runs it;
+6. returns the resulting `RunSummary`.
+
 ### 6.2 What is not automated
 
 - **Recovery is operator-invoked only.** `Orchestrator.__init__` does not
-  call `recover_run`, and nothing runs recovery at startup.
-- **Recovery does not resume the scheduler.** It sets tasks back to `READY`
-  in the store, but `Scheduler.run` always begins by transitioning *every*
-  task to `READY` and then executing the whole graph
-  (`scheduler/engine.py:145-146`); it never consults the persisted statuses
-  or the leases. "Resumable" in the recovery report means "safe to re-run",
-  not "will be picked up".
+  call `recover_run`, and nothing runs recovery at startup. `recover_run`
+  itself still does not restart the scheduler; only `resume_run` does, and
+  only when an operator asks for it.
+- **`resume_run` only works on a run in which nothing completed.**
+  `Scheduler.run` begins by transitioning *every* task in the graph to
+  `READY` (`scheduler/engine.py:153-154`), and `SUCCEEDED → READY` is not a
+  legal transition, so resuming a run in which one task already succeeded
+  raises `ValidationError: illegal task transition succeeded -> ready`.
+  The `resume_run` path is therefore exercised only by runs whose tasks all
+  failed or were interrupted.
 - **Re-running a run id does not resume it.** `Orchestrator.run` calls
-  `state.create_run`, which is `INSERT OR REPLACE INTO runs`
-  (`store/state.py:56-67`). Starting the orchestrator again with the same run
-  id overwrites the run record, re-plans from scratch and re-runs every task
-  — including tasks that already succeeded. The task rows survive (they are
-  keyed by `task_id`), but nothing consults them.
+  `state.create_run`, which now inserts the run row when it does not exist
+  and updates `config_json`, `metadata` and `updated_at` when it does
+  (`store/state.py:46-86`) — the run record is no longer replaced
+  wholesale by an `INSERT OR REPLACE`. The run *status* is still reset
+  (`Orchestrator.run` sets `RunStatus.PLANNING` immediately afterwards), and
+  the run still re-plans from scratch and re-runs every task, including
+  tasks that already succeeded. The task rows survive (they are keyed by
+  `task_id`), but nothing consults them.
+- **Recovery does not undo side effects.** A command that ran before the
+  worker died is not rolled back; `verify_side_effects` only reports it.
 - **The lease is never renewed.** `start_attempt` sets
   `lease_expires_at = now + lease_ttl_s` (`config.scheduler.lease_ttl_s`,
   default 300 s) and nothing extends it. A task that legitimately runs for

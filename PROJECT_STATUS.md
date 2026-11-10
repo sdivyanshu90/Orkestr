@@ -246,9 +246,9 @@ Ordered by how much they limit the project's claims.
 ## Repository map
 
 ```
-src/agent_squad/       ~8,000 lines   the runtime
-tests/                 ~3,600 lines   188 tests
-docs/                  12 files       architecture, 6 ADRs, threat model, reliability,
+src/agent_squad/       ~14,100 lines  the runtime (45 modules)
+tests/                 ~2,900 lines   188 tests
+docs/                  14 files       architecture, 6 ADRs, threat model, reliability,
                                      methodology, results, limitations, walkthrough,
                                      failure analysis
 dashboard/             React app      optional web dashboard
