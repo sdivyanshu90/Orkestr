@@ -16,6 +16,7 @@ verification gate decides what that means.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,14 +27,21 @@ from ..config import RunConfig
 from ..models.artifact import ArtifactKind
 from ..models.evidence import ChangedFile, EvidencePackage, Limitation
 from ..models.message import Message, MessageKind, make_message
-from ..models.task import ADVISORY_CHECKS, Role, TaskSpec
+from ..models.task import ADVISORY_CHECKS, Role, TaskSpec, TaskStatus
 from ..planning.brief import TaskBrief
 from ..security.capabilities import capabilities_for_role
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 from ..tools.base import ToolContext, ToolRegistry
-from ..tools.exec import GitDiffTool, GitStatusTool, RunCommandTool
-from ..tools.fs import ListDirTool, ReadFileTool, WriteFileTool
+from ..tools.exec import (
+    CommitChangesTool,
+    GitDiffTool,
+    GitStatusTool,
+    HttpRequestTool,
+    PushChangesTool,
+    RunCommandTool,
+)
+from ..tools.fs import DeletePathTool, ListDirTool, ReadFileTool, WriteFileTool
 from ..workspace.worktree import Worktree, WorktreeManager, git
 from .base import AgentLoop, WorkerResult, build_provenance
 from .messaging import MessageBus
@@ -55,6 +63,7 @@ class WorkerRunner:
     policy: Any = None
     approver: Any = None
     budget: Any = None
+    tracer: Any = None
 
     # ------------------------------------------------------------- registry
 
@@ -63,6 +72,13 @@ class WorkerRunner:
 
         The reviewer is read-only by construction: it never receives the
         write tool, so a misbehaving reviewer cannot modify the tree.
+
+        The protected tools (``commit_changes``, ``push_changes``,
+        ``delete_path``, ``http_request``) are registered for the roles
+        that hold the corresponding capability.  Registering them is not the
+        same as permitting them: every one of them is additionally gated by
+        the policy engine, which requires an explicit human approval before
+        the call is executed.
         """
         registry = ToolRegistry()
         registry.register(ReadFileTool())
@@ -72,6 +88,14 @@ class WorkerRunner:
         registry.register(GitStatusTool())
         if role in (Role.IMPLEMENTER, Role.TEST_ENGINEER):
             registry.register(WriteFileTool())
+        # The protected tools are registered so that a model can *ask* for
+        # them; whether the request is granted is decided by the policy
+        # engine and a human.
+        if role in (Role.IMPLEMENTER, Role.TEST_ENGINEER):
+            registry.register(CommitChangesTool())
+            registry.register(PushChangesTool())
+            registry.register(DeletePathTool())
+            registry.register(HttpRequestTool())
         return registry
 
     # -------------------------------------------------------------- execute
@@ -168,6 +192,8 @@ class WorkerRunner:
             on_policy_decision=self._policy_hook(task, attempt),
             budget=self.budget,
             budget_scope=f"task:{task.id}",
+            tracer=self.tracer,
+            on_approval_state=self._approval_hook(task, attempt),
         )
 
         try:
@@ -535,6 +561,48 @@ class WorkerRunner:
                     usage = Usage(input_tokens=0, output_tokens=tokens, estimated=True)
                 self.budget.record(f"task:{task.id}", usage)
                 self.budget.record("run", usage)
+
+        return hook
+
+    def _approval_hook(self, task: TaskSpec, attempt: int):
+        """Move the task into and out of ``AWAITING_APPROVAL``.
+
+        The state is not cosmetic: it is how an operator sees that a run is
+        blocked on a human, and it is the only way the CLI and the dashboard
+        can distinguish "working" from "waiting for a person".
+        """
+
+        async def hook(state: str, **kwargs: Any) -> None:
+            action = str(kwargs.get("action") or "")
+            if state == "awaiting":
+                with contextlib.suppress(Exception):
+                    self.state.transition_task(
+                        task.id, TaskStatus.AWAITING_APPROVAL, attempt=attempt
+                    )
+                self.log.append(
+                    EventType.HUMAN_APPROVAL,
+                    run_id=task.run_id,
+                    task_id=task.id,
+                    attempt=attempt,
+                    actor=task.role.value,
+                    payload={"action": action, "status": "requested"},
+                )
+            else:
+                with contextlib.suppress(Exception):
+                    self.state.transition_task(
+                        task.id, TaskStatus.RUNNING, attempt=attempt
+                    )
+                self.log.append(
+                    EventType.HUMAN_APPROVAL,
+                    run_id=task.run_id,
+                    task_id=task.id,
+                    attempt=attempt,
+                    actor=task.role.value,
+                    payload={
+                        "action": action,
+                        "status": "approved" if state == "resolved" else "denied",
+                    },
+                )
 
         return hook
 

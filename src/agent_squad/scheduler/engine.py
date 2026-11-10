@@ -94,6 +94,8 @@ class Scheduler:
     cancellation: asyncio.Event | None = None
     idempotency_prefix: str = ""
     base_revision: str | None = None
+    tracer: Any = None
+    logger: Any = None
     _task_heads: dict[str, str] = field(default_factory=dict)
     outcomes: dict[str, TaskOutcome] = field(default_factory=dict)
 
@@ -288,6 +290,18 @@ class Scheduler:
 
     async def _execute(self, task: TaskSpec) -> TaskOutcome:
         """Run one task, retrying according to the configured policy."""
+        tracer = getattr(self, "tracer", None)
+        if tracer is not None:
+            with tracer.span(
+                "task",
+                run_id=self.config.run_id,
+                task_id=task.id,
+                role=task.role.value,
+            ):
+                return await self._execute_inner(task)
+        return await self._execute_inner(task)
+
+    async def _execute_inner(self, task: TaskSpec) -> TaskOutcome:
         attempts = 0
         max_attempts = min(task.budget.max_attempts, self.config.retry.max_attempts)
         outcome = TaskOutcome(task_id=task.id, status=TaskStatus.FAILED)

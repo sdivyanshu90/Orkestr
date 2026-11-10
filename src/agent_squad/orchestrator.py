@@ -31,6 +31,8 @@ from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
 from .models.run import RunStatus, RunSummary, StrategyDecision
 from .models.task import TaskStatus
+from .observe.events import StructuredLogger
+from .observe.tracing import Tracer
 from .planning.inspector import RepositoryInspector
 from .planning.planner import PlanRequest, PlanResult, build_planner
 from .providers.base import ModelProvider
@@ -151,6 +153,15 @@ class Orchestrator:
             token_limit=config.budget.run_token_limit,
             cost_limit_usd=config.budget.run_cost_limit_usd,
         )
+        self.logger = StructuredLogger(
+            level=config.observability.log_level,
+            json_output=config.observability.log_json,
+        ).bind(run_id=config.run_id)
+        self.tracer = Tracer(
+            service_name=config.observability.service_name,
+            otlp_endpoint=config.observability.otlp_endpoint,
+            sample_rate=config.observability.trace_sample_rate,
+        )
         self.approver = ApprovalBroker(
             state=self.state,
             log=self.log,
@@ -204,6 +215,34 @@ class Orchestrator:
         """Execute a complete orchestration session."""
         started_at = _dt.datetime.now(_dt.UTC)
         warnings: list[str] = []
+        with self.tracer.span(
+            "run",
+            run_id=self.config.run_id,
+            objective=objective[:200],
+            strategy_override=self.config.strategy_override,
+        ):
+            return await self._execute(
+                objective,
+                description=description,
+                request_spec=request_spec,
+                integrate=integrate,
+                cancellation=cancellation,
+                started_at=started_at,
+                warnings=warnings,
+            )
+
+    async def _execute(
+        self,
+        objective: str,
+        *,
+        description: str,
+        request_spec: dict[str, Any] | None,
+        integrate: bool,
+        cancellation: asyncio.Event | None,
+        started_at: _dt.datetime,
+        warnings: list[str],
+    ) -> RunOutcome:
+        self.logger.info("run started", objective=objective[:120])
 
         self.state.create_run(
             self.config.run_id,
@@ -213,12 +252,20 @@ class Orchestrator:
         self.state.set_run_status(self.config.run_id, RunStatus.PLANNING)
 
         # ---- inspect ---------------------------------------------------
-        inspector = RepositoryInspector(self.config.repo_path)
-        context = inspector.inspect()
+        with self.tracer.span("inspect", run_id=self.config.run_id):
+            inspector = RepositoryInspector(self.config.repo_path)
+            context = inspector.inspect()
+        self.logger.debug(
+            "repository inspected",
+            files=len(context.files),
+            tests=len(context.test_files),
+            injection_findings=len(context.injection_findings),
+        )
 
         # ---- plan -------------------------------------------------------
         planner = build_planner(self.config, self.provider)
-        request = PlanRequest(
+        with self.tracer.span("plan", run_id=self.config.run_id):
+            request = PlanRequest(
             run_id=self.config.run_id,
             objective=objective,
             description=description,
@@ -227,10 +274,16 @@ class Orchestrator:
             if self.worktrees.has_commits()
             else None,
             context=context,
-            request_spec=request_spec,
-        )
-        plan = await planner.plan(request)
+                request_spec=request_spec,
+            )
+            plan = await planner.plan(request)
         warnings.extend(plan.warnings)
+        self.logger.info(
+            "plan created",
+            planner=plan.planner,
+            tasks=len(plan.tasks),
+            warnings=len(plan.warnings),
+        )
         self.log.append(
             EventType.PLAN_CREATED,
             run_id=self.config.run_id,
@@ -248,16 +301,23 @@ class Orchestrator:
 
         # ---- strategy ----------------------------------------------------
         selector = StrategySelector(self.config.strategy)
-        decision = selector.select(
-            graph,
-            override=self.config.strategy_override,
-            max_workers_override=self.config.max_workers_override,
-            token_budget=self.config.budget.run_token_limit,
-            cost_budget_usd=self.config.budget.run_cost_limit_usd,
-            price_per_1k_tokens=(
-                self.config.provider.price_input_per_1k
-                + self.config.provider.price_output_per_1k
-            ),
+        with self.tracer.span("strategy", run_id=self.config.run_id):
+            decision = selector.select(
+                graph,
+                override=self.config.strategy_override,
+                max_workers_override=self.config.max_workers_override,
+                token_budget=self.config.budget.run_token_limit,
+                cost_budget_usd=self.config.budget.run_cost_limit_usd,
+                price_per_1k_tokens=(
+                    self.config.provider.price_input_per_1k
+                    + self.config.provider.price_output_per_1k
+                ),
+            )
+        self.logger.info(
+            "strategy selected",
+            strategy=decision.strategy.value,
+            workers=decision.worker_count,
+            speedup=decision.estimated_parallel_speedup,
         )
         self.log.append(
             EventType.STRATEGY_SELECTED,
@@ -288,6 +348,7 @@ class Orchestrator:
             policy=self.policy,
             approver=self.approver.request,
             budget=self.budget,
+            tracer=self.tracer,
         )
         scheduler = Scheduler(
             config=self.config,
@@ -302,6 +363,8 @@ class Orchestrator:
             idempotency_prefix=self.config.run_id,
             base_revision=base_revision,
             cancellation=cancellation,
+            tracer=self.tracer,
+            logger=self.logger,
         )
         summary = await scheduler.run()
         outcomes = dict(scheduler.outcomes)
@@ -325,7 +388,8 @@ class Orchestrator:
         integration: IntegrationResult | None = None
         bundle: str | None = None
         if integrate:
-            integration, bundle = await self._integrate(graph, summary)
+            with self.tracer.span("integration", run_id=self.config.run_id):
+                integration, bundle = await self._integrate(graph, summary)
 
         finished_at = _dt.datetime.now(_dt.UTC)
         # The repository may have moved on since the artifacts were produced

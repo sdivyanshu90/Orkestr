@@ -109,6 +109,8 @@ class AgentLoop:
     on_tool_call: Any = None
     on_usage: Any = None
     on_policy_decision: Any = None
+    tracer: Any = None
+    on_approval_state: Any = None
 
     async def run(
         self,
@@ -156,7 +158,7 @@ class AgentLoop:
                     seed=self.config.provider.seed,
                     metadata={"task_id": self.task_id},
                 )
-                response = await self.provider.complete(request)
+                response = await self._complete(request, iteration)
                 model_calls += 1
                 total_tokens += response.usage.total_tokens
                 cost = self._cost(response.usage)
@@ -278,6 +280,26 @@ class AgentLoop:
     def _tools_iter(self) -> list[Any]:
         return [self.tools.get(name) for name in self.tools.names() if self.tools.get(name)]
 
+    async def _complete(self, request: ModelRequest, iteration: int) -> Any:
+        """One model call, recorded as a span when tracing is available."""
+        if self.tracer is None:
+            return await self.provider.complete(request)
+        with self.tracer.span(
+            "model.call",
+            run_id=self.run_id,
+            task_id=self.task_id,
+            provider=getattr(self.provider, "name", "unknown"),
+            model=getattr(self.provider, "model", "unknown"),
+            iteration=iteration,
+        ) as span:
+            response = await self.provider.complete(request)
+            span.attributes["input_tokens"] = response.usage.input_tokens
+            span.attributes["output_tokens"] = response.usage.output_tokens
+            span.attributes["estimated"] = response.usage.estimated
+            span.attributes["tool_calls"] = len(response.tool_calls)
+            span.attributes["latency_s"] = round(response.latency_s, 6)
+            return response
+
     async def _invoke_tool(
         self,
         call: ToolCall,
@@ -325,16 +347,31 @@ class AgentLoop:
             if decision.decision.value == "require_approval":
                 approved = False
                 if self.approver is not None:
-                    approved = await _maybe_await(
-                        self.approver(
-                            action=decision.action or call.name,
-                            rationale=decision.reason,
-                            arguments=list(call.arguments.get("command") or [])
-                            if isinstance(call.arguments.get("command"), (list, tuple))
-                            else [],
-                            task_id=self.task_id,
+                    if self.on_approval_state is not None:
+                        await _maybe_await(
+                            self.on_approval_state(
+                                "awaiting", action=decision.action or call.name
+                            )
+                        )
+                    approved = bool(
+                        await _maybe_await(
+                            self.approver(
+                                action=decision.action or call.name,
+                                rationale=decision.reason,
+                                arguments=list(call.arguments.get("command") or [])
+                                if isinstance(call.arguments.get("command"), (list, tuple))
+                                else [],
+                                task_id=self.task_id,
+                            )
                         )
                     )
+                    if self.on_approval_state is not None:
+                        await _maybe_await(
+                            self.on_approval_state(
+                                "resolved" if approved else "denied",
+                                action=decision.action or call.name,
+                            )
+                        )
                 if not approved:
                     return ToolResult(
                         ok=False,

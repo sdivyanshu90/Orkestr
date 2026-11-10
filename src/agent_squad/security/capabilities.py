@@ -115,11 +115,14 @@ DEFAULT_ROLE_CAPABILITIES: dict[Role, CapabilitySet] = {
             Capability.ARTIFACT_WRITE,
             Capability.BROADCAST,
             Capability.APPROVAL_REQUEST,
-            # Committing and pushing are *capability*-granted but
-            # *approval*-gated: the human authorisation is the control that
-            # matters, not the absence of the capability.
+            # Committing, pushing, deleting and reaching the network are
+            # *capability*-granted but *approval*-gated: the human
+            # authorisation is the control that matters, not the absence of
+            # the capability.
             Capability.GIT_COMMIT,
             Capability.GIT_PUSH,
+            Capability.FS_DELETE,
+            Capability.NET_HTTP,
         }
     ),
     Role.TEST_ENGINEER: CapabilitySet.of(

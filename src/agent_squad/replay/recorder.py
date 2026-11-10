@@ -91,7 +91,14 @@ class RecordingProvider:
     exchanges: list[Exchange] = field(default_factory=list)
     record_artifacts: bool = True
 
-    name = "recording"
+    @property
+    def name(self) -> str:
+        """The name of the provider that actually served the request.
+
+        The recorder is a transparent wrapper: it must not change how the
+        provider identifies itself in traces and logs.
+        """
+        return getattr(self.inner, "name", "recording")
 
     @property
     def model(self) -> str:

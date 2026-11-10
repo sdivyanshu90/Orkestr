@@ -147,6 +147,64 @@ class PushChangesTool:
         return await _git(context, ["git", "push", remote, branch])
 
 
+class HttpRequestTool:
+    """Perform an outbound HTTP request.
+
+    This tool requires the ``net:http`` capability *and* human approval,
+    because an outbound request can exfiltrate repository content.  It is
+    the only tool in the set that is allowed to leave the host.
+    """
+
+    name = "http_request"
+    rule = ToolRule(
+        name="http_request",
+        required_capabilities=(Capability.NET_HTTP,),
+        needs_approval=True,
+        approval_action="net.http",
+        description="Perform an outbound HTTP request (requires human approval).",
+    )
+
+    async def invoke(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+        import httpx
+
+        url = arguments.get("url")
+        if not url or not isinstance(url, str):
+            return ToolResult(ok=False, error="url is required", error_class="validation")
+        if not url.startswith(("http://", "https://")):
+            return ToolResult(
+                ok=False,
+                error="only http and https URLs are permitted",
+                error_class="policy",
+            )
+        method = str(arguments.get("method") or "GET").upper()
+        if method not in ("GET", "POST", "HEAD"):
+            return ToolResult(
+                ok=False,
+                error=f"unsupported method {method!r}",
+                error_class="validation",
+            )
+        timeout = float(arguments.get("timeout_s") or 30.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+                response = await client.request(method, url)
+        except httpx.HTTPError as exc:
+            return ToolResult(ok=False, error=str(exc), error_class="tool")
+        return ToolResult(
+            ok=response.status_code < 400,
+            content=response.text[:20_000],
+            data={
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "method": method,
+                "url": url,
+            },
+            error=None
+            if response.status_code < 400
+            else f"HTTP {response.status_code}",
+            error_class=None if response.status_code < 400 else "tool",
+        )
+
+
 def git_available() -> bool:
     return shutil.which("git") is not None
 
