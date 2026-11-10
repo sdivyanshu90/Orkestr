@@ -267,6 +267,7 @@ class Orchestrator:
             run_id=self.config.run_id,
             payload=decision.model_dump(mode="json"),
         )
+        self.state.set_strategy(self.config.run_id, decision.strategy.value)
         self.state.set_run_status(self.config.run_id, RunStatus.RUNNING)
 
         max_workers = min(

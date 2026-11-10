@@ -109,6 +109,14 @@ class StateStore:
             )
             self._log.append_in_transaction(conn, event)
 
+    def set_strategy(self, run_id: str, strategy: str) -> None:
+        """Record the execution strategy selected for a run."""
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE runs SET strategy = ?, updated_at = ? WHERE run_id = ?",
+                (strategy, utcnow().isoformat(), run_id),
+            )
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self._db.query_one("SELECT * FROM runs WHERE run_id = ?", (run_id,))
         if not row:

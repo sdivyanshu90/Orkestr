@@ -185,7 +185,9 @@ class RunConfig(_Base):
 
     run_id: str
     repo_path: str
-    provider: ProviderConfig = Field(default_factory=ProviderConfig)
+    provider: ProviderConfig = Field(
+        default_factory=lambda: ProviderConfig(name="mock", model="mock-deterministic-v1")
+    )
     fallback_providers: tuple[ProviderConfig, ...] = ()
     roles: dict[str, RoleConfig] = Field(default_factory=dict)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)

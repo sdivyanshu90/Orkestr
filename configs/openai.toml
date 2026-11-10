@@ -1,0 +1,72 @@
+# agent-squad configuration: a real model provider.
+#
+# Copy this file, fill in the endpoint and model, and export the API key:
+#
+#   export OPENAI_API_KEY=...
+#   agent-squad run "..." --repo . --config configs/openai.toml
+#
+# The API key is read from the *environment variable named here*.  It is
+# never stored in this file, never written to the run directory and never
+# logged.
+
+[provider]
+name = "openai_compat"
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+max_concurrency = 4
+timeout_s = 180.0
+max_output_tokens = 8192
+temperature = 0.0
+# Price per 1,000 tokens.  Configure these to match your contract; the
+# runtime never assumes a price.
+price_input_per_1k = 0.00015
+price_output_per_1k = 0.0006
+price_currency = "USD"
+
+[scheduler]
+max_workers = 3
+default_task_timeout_s = 1800.0
+
+[budget]
+run_token_limit = 500000
+run_cost_limit_usd = 5.0
+per_task_token_limit = 120000
+per_task_cost_limit_usd = 1.0
+context_window_tokens = 128000
+
+[retry]
+max_attempts = 3
+initial_backoff_s = 2.0
+max_backoff_s = 60.0
+backoff_multiplier = 2.0
+jitter = 0.25
+
+[strategy]
+min_tasks_for_parallel = 2
+max_workers = 3
+
+[verification]
+python_executable = "python3"
+command_timeout_s = 900.0
+integration_test_command = ["python3", "-m", "pytest", "-q"]
+
+[sandbox]
+allow_network = false
+cpu_time_s = 120
+memory_mb = 4096
+wall_time_s = 600.0
+
+[approval]
+require_approval_for_git_commit = true
+require_approval_for_git_push = true
+require_approval_for_network = true
+require_approval_for_delete = true
+# Paths that always require a human decision, whatever the tool.
+protected_paths = ["infra/", ".github/workflows/", "secrets/"]
+approval_timeout_s = 7200.0
+
+[observability]
+log_level = "INFO"
+log_json = true
+service_name = "agent-squad"

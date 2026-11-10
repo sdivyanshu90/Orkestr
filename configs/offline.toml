@@ -1,0 +1,73 @@
+# agent-squad configuration: the deterministic offline profile.
+#
+# This profile uses the mock provider, so it runs with no API key, no
+# network access and identical results on every machine.  It is the profile
+# the test-suite, the benchmark harness and the demo all use.
+#
+#   agent-squad run "..." --repo . --config configs/offline.toml
+
+[provider]
+name = "mock"
+model = "mock-deterministic-v1"
+max_concurrency = 4
+timeout_s = 120.0
+max_output_tokens = 4096
+temperature = 0.0
+# Pricing is configuration, never a constant.  The mock is free; these
+# values are placeholders for a real provider.
+price_input_per_1k = 0.0
+price_output_per_1k = 0.0
+
+[scheduler]
+max_workers = 4
+default_task_timeout_s = 900.0
+lease_ttl_s = 300.0
+max_delegation_depth = 2
+
+[retry]
+max_attempts = 3
+initial_backoff_s = 0.5
+max_backoff_s = 30.0
+backoff_multiplier = 2.0
+jitter = 0.25
+
+[budget]
+context_window_tokens = 128000
+
+[strategy]
+min_tasks_for_parallel = 2
+max_workers = 4
+coordination_overhead_tokens = 1200
+context_duplication_tokens = 1500
+integration_risk_penalty = 0.35
+parallel_speedup_exponent = 0.8
+shared_file_conflict_weight = 0.5
+
+[verification]
+python_executable = "python3"
+command_timeout_s = 600.0
+require_independent_reexecution = true
+integration_test_command = ["python3", "-m", "pytest", "-q"]
+review_is_advisory = true
+allow_llm_only_acceptance = false
+
+[sandbox]
+allow_network = false
+cpu_time_s = 60
+memory_mb = 2048
+wall_time_s = 120.0
+max_output_bytes = 1000000
+max_processes = 64
+
+[approval]
+require_approval_for_git_commit = true
+require_approval_for_git_push = true
+require_approval_for_network = true
+require_approval_for_delete = true
+protected_paths = []
+approval_timeout_s = 3600.0
+
+[observability]
+log_level = "INFO"
+log_json = false
+service_name = "agent-squad"

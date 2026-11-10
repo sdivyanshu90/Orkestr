@@ -120,17 +120,19 @@ class SuiteResult:
                     continue
                 base_value = float(base_mean[metric])
                 cand_value = float(cand_mean[metric])
-                if better_is_lower:
+                if abs(cand_value - base_value) < 1e-12:
+                    improved = False
+                    note = "no measurable difference"
+                elif better_is_lower:
                     improved = cand_value < base_value
                 else:
                     improved = cand_value > base_value
-                note = ""
-                if metric == "verified_completion_rate" and not improved:
+                if metric == "verified_completion_rate" and not improved and not note:
                     note = (
                         "multi-agent execution did not improve the verified "
                         "completion rate"
                     )
-                if metric == "wall_clock_s" and not improved:
+                if metric == "wall_clock_s" and not improved and not note:
                     note = "multi-agent execution was not faster"
                 comparisons.append(
                     Comparison(

@@ -57,8 +57,14 @@ def render_report(report: dict[str, Any], console: Console | None = None) -> Non
         table.add_column("candidate", justify="right")
         table.add_column("outcome")
         for comparison in comparisons:
-            improved = comparison["improved"]
-            marker = "[green]better[/green]" if improved else "[red]worse[/red]"
+            outcome = comparison.get("outcome") or (
+                "better" if comparison["improved"] else "worse"
+            )
+            marker = {
+                "better": "[green]better[/green]",
+                "worse": "[red]worse[/red]",
+                "unchanged": "[dim]unchanged[/dim]",
+            }.get(outcome, outcome)
             table.add_row(
                 comparison["candidate"],
                 comparison["metric"],

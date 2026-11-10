@@ -1,0 +1,70 @@
+{
+  "objective": "Add two independent features that touch different files",
+  "description": "The shape where fan-out should pay off: two independent tasks, no shared files, no dependency.",
+  "tasks": [
+    {
+      "id": "feature-alpha",
+      "title": "Add the alpha helper",
+      "objective": "Create alpha.py exposing an alpha(value) function that doubles its argument",
+      "role": "implementer",
+      "depends_on": [],
+      "priority": 70,
+      "complexity": "trivial",
+      "estimated_duration_s": 45,
+      "include_paths": ["alpha.py"],
+      "anticipated_files": ["alpha.py"],
+      "edits": [
+        {
+          "path": "alpha.py",
+          "content": "\"\"\"Alpha feature.\"\"\"\n\n\ndef alpha(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "alpha-exists",
+          "description": "alpha.py exists",
+          "kind": "file_exists",
+          "spec": { "path": "alpha.py" }
+        },
+        {
+          "id": "alpha-symbol",
+          "description": "alpha.py defines alpha",
+          "kind": "file_contains",
+          "spec": { "path": "alpha.py", "pattern": "def alpha" }
+        }
+      ]
+    },
+    {
+      "id": "feature-beta",
+      "title": "Add the beta helper",
+      "objective": "Create beta.py exposing a beta(value) function that triples its argument",
+      "role": "implementer",
+      "depends_on": [],
+      "priority": 70,
+      "complexity": "trivial",
+      "estimated_duration_s": 45,
+      "include_paths": ["beta.py"],
+      "anticipated_files": ["beta.py"],
+      "edits": [
+        {
+          "path": "beta.py",
+          "content": "\"\"\"Beta feature.\"\"\"\n\n\ndef beta(value: int) -> int:\n    return value * 3\n"
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "beta-exists",
+          "description": "beta.py exists",
+          "kind": "file_exists",
+          "spec": { "path": "beta.py" }
+        },
+        {
+          "id": "beta-symbol",
+          "description": "beta.py defines beta",
+          "kind": "file_contains",
+          "spec": { "path": "beta.py", "pattern": "def beta" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "objective": "Add a round_half_up helper to calc.py and cover it with unit tests",
+  "description": "Two tasks with a real dependency: the test task needs the implementation to exist.",
+  "tasks": [
+    {
+      "id": "impl",
+      "title": "Implement round_half_up",
+      "objective": "Add a round_half_up(value, digits=0) helper to calc.py that rounds halves away from zero",
+      "description": "Banker's rounding is not acceptable here; use half-away-from-zero.",
+      "role": "implementer",
+      "depends_on": [],
+      "priority": 80,
+      "complexity": "low",
+      "estimated_duration_s": 60,
+      "include_paths": ["calc.py"],
+      "anticipated_files": ["calc.py"],
+      "edits": [
+        {
+          "path": "calc.py",
+          "content": "\"\"\"A tiny arithmetic module used as a benchmark target.\"\"\"\n\n\ndef add(a: int, b: int) -> int:\n    return a + b\n\n\ndef subtract(a: int, b: int) -> int:\n    return a - b\n\n\ndef round_half_up(value: float, digits: int = 0) -> float:\n    \"\"\"Round half away from zero (not banker's rounding).\"\"\"\n    factor = 10**digits\n    shifted = value * factor\n    if shifted >= 0:\n        rounded = int(shifted + 0.5)\n    else:\n        rounded = -int(-shifted + 0.5)\n    return rounded / factor\n"
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "impl-file",
+          "description": "calc.py exists",
+          "kind": "file_exists",
+          "spec": { "path": "calc.py" }
+        },
+        {
+          "id": "impl-symbol",
+          "description": "calc.py defines round_half_up",
+          "kind": "file_contains",
+          "spec": { "path": "calc.py", "pattern": "def round_half_up" }
+        },
+        {
+          "id": "impl-changed",
+          "description": "the implementation produced a change",
+          "kind": "diff_nonempty",
+          "spec": {}
+        }
+      ]
+    },
+    {
+      "id": "tests",
+      "title": "Test round_half_up",
+      "objective": "Add unit tests covering round_half_up, including the negative and half-way cases",
+      "role": "test_engineer",
+      "depends_on": ["impl"],
+      "priority": 60,
+      "complexity": "low",
+      "estimated_duration_s": 60,
+      "include_paths": ["tests/"],
+      "anticipated_files": ["tests/test_rounding.py"],
+      "edits": [
+        {
+          "path": "tests/test_rounding.py",
+          "content": "import pytest\n\nfrom calc import round_half_up\n\n\ndef test_round_half_up_basic():\n    assert round_half_up(2.5) == 3.0\n    assert round_half_up(3.14159, 2) == 3.14\n\n\ndef test_round_half_up_negative():\n    assert round_half_up(-2.5) == -3.0\n\n\n@pytest.mark.parametrize(\n    \"value,expected\", [(0.0, 0.0), (0.125, 0.13), (2.5, 3.0)]\n)\ndef test_round_half_up_values(value, expected):\n    assert round_half_up(value, 2 if value != 2.5 else 0) == expected\n"
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "tests-file",
+          "description": "the rounding test module exists",
+          "kind": "file_exists",
+          "spec": { "path": "tests/test_rounding.py" }
+        },
+        {
+          "id": "tests-pass",
+          "description": "the rounding tests pass",
+          "kind": "pytest_selector",
+          "spec": { "selector": "tests/test_rounding.py" }
+        }
+      ]
+    }
+  ]
+}

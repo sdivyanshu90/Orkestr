@@ -415,10 +415,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
     from ..replay.replayer import replay_run
 
     result = replay_run(args.run_id, data_dir=args.data_dir, checkpoint=args.checkpoint)
+    payload = result.to_dict() if hasattr(result, "to_dict") else result
     if args.json:
-        _print_json(result)
+        _print_json(payload)
         return 0
-    console.print(json.dumps(result, indent=2, default=str)[:20_000])
+    console.print(json.dumps(payload, indent=2, default=str)[:20_000])
     return 0
 
 
@@ -454,9 +455,21 @@ def build_parser() -> argparse.ArgumentParser:
         description="Adaptive, verifiable multi-agent software engineering runtime.",
     )
     parser.add_argument("--data-dir", default=None, help="root directory for run data")
+
+    # Every subcommand also accepts --data-dir so that it can be given after
+    # the subcommand as well as before it.  SUPPRESS keeps the subparser from
+    # overwriting the top-level value when it is not supplied.
+    def add_common(sub_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        sub_parser.add_argument(
+            "--data-dir",
+            default=argparse.SUPPRESS,
+            help="root directory for run data",
+        )
+        return sub_parser
+
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = sub.add_parser("run", help="execute an orchestration run")
+    run_parser = add_common(sub.add_parser("run", help="execute an orchestration run"))
     run_parser.add_argument("objective")
     run_parser.add_argument("--description", default="")
     run_parser.add_argument("--repo", default=".", help="path to the repository")
@@ -471,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--json", action="store_true")
     run_parser.set_defaults(func=cmd_run)
 
-    plan_parser = sub.add_parser("plan", help="produce a plan without executing it")
+    plan_parser = add_common(sub.add_parser("plan", help="produce a plan without executing it"))
     plan_parser.add_argument("objective")
     plan_parser.add_argument("--description", default="")
     plan_parser.add_argument("--repo", default=".")
@@ -485,12 +498,12 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--json", action="store_true")
     plan_parser.set_defaults(func=cmd_plan)
 
-    status_parser = sub.add_parser("status", help="show the status of a run")
+    status_parser = add_common(sub.add_parser("status", help="show the status of a run"))
     status_parser.add_argument("run_id")
     status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(func=cmd_status)
 
-    inspect_parser = sub.add_parser("inspect", help="inspect a run in detail")
+    inspect_parser = add_common(sub.add_parser("inspect", help="inspect a run in detail"))
     inspect_parser.add_argument("run_id")
     inspect_parser.add_argument("--tasks", action="store_true")
     inspect_parser.add_argument("--events", action="store_true")
@@ -501,7 +514,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--json", action="store_true")
     inspect_parser.set_defaults(func=cmd_inspect)
 
-    approve_parser = sub.add_parser("approve", help="answer a pending approval request")
+    approve_parser = add_common(sub.add_parser("approve", help="answer a pending approval request"))
     approve_parser.add_argument("approval_id")
     approve_parser.add_argument("--run-id", dest="run_id", default=None)
     approve_parser.add_argument("--decision", default="yes", choices=["yes", "no"])
@@ -510,24 +523,24 @@ def build_parser() -> argparse.ArgumentParser:
     approve_parser.add_argument("--json", action="store_true")
     approve_parser.set_defaults(func=cmd_approve)
 
-    cancel_parser = sub.add_parser("cancel", help="cancel a run")
+    cancel_parser = add_common(sub.add_parser("cancel", help="cancel a run"))
     cancel_parser.add_argument("run_id")
     cancel_parser.add_argument("--reason", default=None)
     cancel_parser.add_argument("--json", action="store_true")
     cancel_parser.set_defaults(func=cmd_cancel)
 
-    resume_parser = sub.add_parser("resume", help="recover an interrupted run")
+    resume_parser = add_common(sub.add_parser("resume", help="recover an interrupted run"))
     resume_parser.add_argument("run_id")
     resume_parser.add_argument("--json", action="store_true")
     resume_parser.set_defaults(func=cmd_resume)
 
-    replay_parser = sub.add_parser("replay", help="replay a recorded run")
+    replay_parser = add_common(sub.add_parser("replay", help="replay a recorded run"))
     replay_parser.add_argument("run_id")
     replay_parser.add_argument("--checkpoint", default=None)
     replay_parser.add_argument("--json", action="store_true")
     replay_parser.set_defaults(func=cmd_replay)
 
-    bench_parser = sub.add_parser("benchmark", help="run the benchmark suite")
+    bench_parser = add_common(sub.add_parser("benchmark", help="run the benchmark suite"))
     bench_parser.add_argument("--suite", default="demo")
     bench_parser.add_argument("--trials", type=int, default=1)
     bench_parser.add_argument("--strategies", default=None)

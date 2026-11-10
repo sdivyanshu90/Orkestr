@@ -186,7 +186,13 @@ class StrategyAggregate:
 
 @dataclass
 class Comparison:
-    """A comparison between two strategies."""
+    """A comparison between two strategies.
+
+    ``outcome`` is one of ``better``, ``worse`` or ``unchanged``.  A
+    comparison in which nothing moved is reported as such rather than being
+    folded into either of the other two: presenting a tie as a regression
+    would misrepresent the evidence.
+    """
 
     baseline: str
     candidate: str
@@ -195,6 +201,14 @@ class Comparison:
     candidate_value: float
     improved: bool
     note: str = ""
+    outcome: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.outcome:
+            if abs(self.candidate_value - self.baseline_value) < 1e-12:
+                self.outcome = "unchanged"
+            else:
+                self.outcome = "better" if self.improved else "worse"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,5 +218,6 @@ class Comparison:
             "baseline_value": round(self.baseline_value, 6),
             "candidate_value": round(self.candidate_value, 6),
             "improved": self.improved,
+            "outcome": self.outcome,
             "note": self.note,
         }
