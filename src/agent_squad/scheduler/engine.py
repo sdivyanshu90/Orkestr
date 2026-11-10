@@ -1,0 +1,526 @@
+"""The asynchronous DAG scheduler.
+
+The scheduler is the only component that decides *what runs next*.  It owns
+the ready queue, the concurrency limit, the retry policy, the deadlines and
+the cancellation propagation.
+
+Consistency guarantees of this local runtime
+-------------------------------------------
+
+* **Serialised state changes.**  Every state change goes through
+  :class:`~agent_squad.store.state.StateStore`, which performs the event
+  append and the projection update inside a single SQLite transaction.
+* **Attempt fencing.**  Each attempt increments a monotonically increasing
+  counter.  A worker may only write state for the attempt it holds, so a
+  late message from a superseded attempt is rejected instead of overwriting
+  a newer result.
+* **Single writer.**  SQLite in WAL mode with ``BEGIN IMMEDIATE`` gives one
+  writer at a time; the scheduler is the only writer during a run.
+* **No exactly-once side effects.**  The scheduler guarantees that a *task
+  transition* is applied once.  It does not guarantee that an arbitrary
+  command a worker ran happened exactly once: a worker that crashed after
+  running a command but before recording the result will be retried, and the
+  command may run again.  Idempotency keys are recorded for such
+  operations so that the repetition is detectable.
+* **Deterministic replay, not deterministic re-execution.**  Replaying the
+  event log reproduces the state machine exactly.  Re-running the run does
+  not: model outputs are stochastic and are recorded rather than regenerated.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from ..config import RunConfig
+from ..dag.graph import TaskGraph
+from ..errors import CancelledError, StaleAttemptError
+from ..models.run import RunStatus, RunSummary
+from ..models.task import TaskSpec, TaskStatus
+from ..planning.brief import TaskBrief
+from ..store.events import EventLog, EventType
+from ..store.state import StateStore
+from ..verification.gate import VerificationGate, VerificationReport
+
+
+@dataclass
+class TaskOutcome:
+    """What happened to one task."""
+
+    task_id: str
+    status: TaskStatus
+    attempts: int = 0
+    verification: VerificationReport | None = None
+    error: str | None = None
+    error_class: str | None = None
+    tokens_used: int = 0
+    cost_usd: float = 0.0
+    duration_s: float = 0.0
+    patch_artifact_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "status": self.status.value,
+            "attempts": self.attempts,
+            "error": self.error,
+            "error_class": self.error_class,
+            "tokens_used": self.tokens_used,
+            "cost_usd": self.cost_usd,
+            "duration_s": round(self.duration_s, 6),
+            "verification": self.verification.to_dict() if self.verification else None,
+            "patch_artifact_id": self.patch_artifact_id,
+        }
+
+
+@dataclass
+class Scheduler:
+    """Dependency-aware, bounded-concurrency task scheduler."""
+
+    config: RunConfig
+    graph: TaskGraph
+    state: StateStore
+    log: EventLog
+    runner: Any
+    gate: VerificationGate
+    briefs: dict[str, TaskBrief] = field(default_factory=dict)
+    bus: Any = None
+    max_workers: int = 4
+    cancellation: asyncio.Event | None = None
+    idempotency_prefix: str = ""
+    base_revision: str | None = None
+    _task_heads: dict[str, str] = field(default_factory=dict)
+    outcomes: dict[str, TaskOutcome] = field(default_factory=dict)
+
+    # ------------------------------------------------------------- helpers
+
+    def _owner(self, task: TaskSpec) -> str:
+        return f"{task.role.value}:{task.id}"
+
+    def _timeout_for(self, task: TaskSpec) -> float:
+        if task.budget.deadline_s:
+            return task.budget.deadline_s
+        return self.config.scheduler.default_task_timeout_s
+
+    def _base_for(self, task: TaskSpec) -> str | None:
+        """The revision a task's worktree should start from.
+
+        A task with dependencies starts from the head produced by the last
+        completed dependency, so that dependent work sees the changes it
+        depends on.  The patch the task produces is relative to *that* base,
+        which is why integration replays patches in dependency order.
+        """
+        for dependency in task.depends_on:
+            head = self._task_heads.get(dependency)
+            if head:
+                return head
+        return self.base_revision
+
+    def _backoff(self, attempt: int, task_id: str) -> float:
+        """Deterministic jitter derived from the task id.
+
+        Real jitter uses randomness; a hash-derived jitter still de-synchronises
+        concurrent workers while remaining reproducible during replay.
+        """
+        factor = (hash((self.idempotency_prefix, task_id, attempt)) % 1000) / 1000.0
+        return self.config.retry.backoff_for(attempt, factor)
+
+    # ----------------------------------------------------------------- run
+
+    async def run(self) -> RunSummary:
+        """Execute the whole graph and return a summary."""
+        started = time.monotonic()
+        completed: set[str] = set()
+        failed: set[str] = set()
+        blocked: set[str] = set()
+        cancelled: set[str] = set()
+        outcomes: dict[str, TaskOutcome] = {}
+
+        pending: set[str] = set(self.graph.tasks)
+        running: dict[asyncio.Task[Any], str] = {}
+
+        for task in self.graph.tasks.values():
+            self.state.transition_task(task.id, TaskStatus.READY)
+
+        try:
+            while pending or running:
+                if self.cancellation is not None and self.cancellation.is_set():
+                    for task_id in list(pending):
+                        self._cancel_task(task_id, cancelled)
+                        pending.discard(task_id)
+                    break
+
+                # Tasks whose ancestors failed can never run.
+                newly_blocked = self.graph.blocked_by_failure(failed) - blocked - completed
+                for task_id in sorted(newly_blocked):
+                    self.state.transition_task(
+                        task_id, TaskStatus.BLOCKED, payload={"reason": "dependency failed"}
+                    )
+                    blocked.add(task_id)
+                    pending.discard(task_id)
+                    outcomes[task_id] = TaskOutcome(
+                        task_id=task_id,
+                        status=TaskStatus.BLOCKED,
+                        error="a prerequisite task failed",
+                        error_class="dependency",
+                    )
+
+                ready = [
+                    self.graph.tasks[tid]
+                    for tid in sorted(pending)
+                    if all(dep in completed for dep in self.graph.tasks[tid].depends_on)
+                    and tid not in blocked
+                ]
+                ready.sort(key=lambda t: (-t.priority, t.id))
+
+                while ready and len(running) < self.max_workers:
+                    task = ready.pop(0)
+                    pending.discard(task.id)
+                    handle = asyncio.create_task(self._execute(task), name=f"task:{task.id}")
+                    running[handle] = task.id
+
+                if not running:
+                    break
+
+                done, _ = await asyncio.wait(
+                    running.keys(), return_when=asyncio.FIRST_COMPLETED
+                )
+                for handle in done:
+                    task_id = running.pop(handle)
+                    try:
+                        outcome = handle.result()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        outcome = TaskOutcome(
+                            task_id=task_id,
+                            status=TaskStatus.FAILED,
+                            error=str(exc),
+                            error_class="unknown",
+                        )
+                    outcomes[task_id] = outcome
+                    if outcome.status is TaskStatus.SUCCEEDED:
+                        completed.add(task_id)
+                    elif outcome.status in (TaskStatus.FAILED, TaskStatus.TIMED_OUT):
+                        failed.add(task_id)
+                    elif outcome.status is TaskStatus.CANCELLED:
+                        cancelled.add(task_id)
+        except asyncio.CancelledError:
+            for handle in running:
+                handle.cancel()
+            raise
+        finally:
+            for handle in list(running):
+                handle.cancel()
+            if running:
+                await asyncio.gather(*running.keys(), return_exceptions=True)
+
+        summary = self._summarise(outcomes, started)
+        final_status = self._final_status(summary)
+        summary.status = final_status
+        self.outcomes = outcomes
+        self.state.set_run_status(self.config.run_id, final_status)
+        return summary
+
+    # ------------------------------------------------------------ execute
+
+    async def _execute(self, task: TaskSpec) -> TaskOutcome:
+        """Run one task, retrying according to the configured policy."""
+        attempts = 0
+        max_attempts = min(task.budget.max_attempts, self.config.retry.max_attempts)
+        outcome = TaskOutcome(task_id=task.id, status=TaskStatus.FAILED)
+
+        while attempts < max_attempts:
+            if self.cancellation is not None and self.cancellation.is_set():
+                self._cancel_task(task.id, set())
+                return TaskOutcome(
+                    task_id=task.id, status=TaskStatus.CANCELLED, attempts=attempts
+                )
+            attempts += 1
+            try:
+                state = self.state.start_attempt(
+                    task.id,
+                    owner=self._owner(task),
+                    lease_ttl_s=self.config.scheduler.lease_ttl_s,
+                )
+            except Exception as exc:
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.FAILED,
+                    attempts=attempts,
+                    error=str(exc),
+                    error_class="validation",
+                )
+            attempt = state.attempt
+
+            try:
+                self.state.transition_task(task.id, TaskStatus.RUNNING, attempt=attempt)
+            except StaleAttemptError:
+                return outcome
+
+            started = time.monotonic()
+            result = None
+            timed_out = False
+            try:
+                result = await asyncio.wait_for(
+                    self.runner.execute(
+                        task,
+                        self.briefs.get(task.id) or self._fallback_brief(task),
+                        attempt=attempt,
+                        cancellation=self.cancellation,
+                        base_revision=self._base_for(task),
+                    ),
+                    timeout=self._timeout_for(task),
+                )
+            except asyncio.TimeoutError:
+                timed_out = True
+            except asyncio.CancelledError:
+                self._cancel_task(task.id, set())
+                raise
+            except Exception as exc:
+                result = None
+                failure_message = str(exc)
+                failure_class = "unknown"
+
+            if timed_out:
+                try:
+                    self.state.transition_task(
+                        task.id,
+                        TaskStatus.TIMED_OUT,
+                        attempt=attempt,
+                        error_class="timeout",
+                        error_message=f"exceeded {self._timeout_for(task):.0f}s deadline",
+                    )
+                except StaleAttemptError:
+                    pass
+                if attempts < max_attempts:
+                    self.state.transition_task(
+                        task.id, TaskStatus.RETRY_SCHEDULED, attempt=attempt
+                    )
+                    await asyncio.sleep(self._backoff(attempts, task.id))
+                    self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
+                    continue
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.TIMED_OUT,
+                    attempts=attempts,
+                    error=f"exceeded {self._timeout_for(task):.0f}s deadline",
+                    error_class="timeout",
+                    duration_s=time.monotonic() - started,
+                )
+
+            if result is None:
+                # An unexpected exception escaped the worker.
+                try:
+                    self.state.transition_task(
+                        task.id,
+                        TaskStatus.FAILED,
+                        attempt=attempt,
+                        error_class=failure_class,
+                        error_message=failure_message,
+                    )
+                except StaleAttemptError:
+                    pass
+                if attempts < max_attempts:
+                    await asyncio.sleep(self._backoff(attempts, task.id))
+                    self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
+                    continue
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.FAILED,
+                    attempts=attempts,
+                    error=failure_message,
+                    error_class=failure_class,
+                    duration_s=time.monotonic() - started,
+                )
+
+            if not result.ok:
+                try:
+                    self.state.transition_task(
+                        task.id,
+                        TaskStatus.FAILED,
+                        attempt=attempt,
+                        error_class=result.error_class,
+                        error_message=result.error,
+                    )
+                except StaleAttemptError:
+                    pass
+                self.log.append(
+                    EventType.TASK_ATTEMPT_FINISHED,
+                    run_id=self.config.run_id,
+                    task_id=task.id,
+                    attempt=attempt,
+                    actor=self._owner(task),
+                    payload={
+                        "ok": False,
+                        "error": result.error,
+                        "error_class": result.error_class,
+                    },
+                )
+                retryable = result.error_class not in ("policy", "validation", "budget")
+                if retryable and attempts < max_attempts:
+                    await asyncio.sleep(self._backoff(attempts, task.id))
+                    self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
+                    continue
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.FAILED,
+                    attempts=attempts,
+                    error=result.error,
+                    error_class=result.error_class,
+                    tokens_used=result.tokens_used,
+                    cost_usd=result.cost_usd,
+                    duration_s=time.monotonic() - started,
+                )
+
+            # The worker succeeded.  Now verify independently.
+            report = await self._verify(task, result)
+            if result.head_revision:
+                self._task_heads[task.id] = result.head_revision
+            if report is not None and not report.passed:
+                try:
+                    self.state.transition_task(
+                        task.id,
+                        TaskStatus.FAILED,
+                        attempt=attempt,
+                        error_class="verification",
+                        error_message=report.error,
+                    )
+                except StaleAttemptError:
+                    pass
+                retryable = True
+                if attempts < max_attempts:
+                    await asyncio.sleep(self._backoff(attempts, task.id))
+                    self.state.transition_task(task.id, TaskStatus.READY, attempt=attempt)
+                    continue
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.FAILED,
+                    attempts=attempts,
+                    error=report.error,
+                    error_class="verification",
+                    verification=report,
+                    tokens_used=result.tokens_used,
+                    cost_usd=result.cost_usd,
+                    duration_s=time.monotonic() - started,
+                    patch_artifact_id=result.evidence.patch_artifact_id
+                    if result.evidence
+                    else None,
+                )
+
+            try:
+                self.state.transition_task(task.id, TaskStatus.SUCCEEDED, attempt=attempt)
+            except StaleAttemptError:
+                pass
+
+            self.log.append(
+                EventType.TASK_ATTEMPT_FINISHED,
+                run_id=self.config.run_id,
+                task_id=task.id,
+                attempt=attempt,
+                actor=self._owner(task),
+                payload={
+                    "ok": True,
+                    "verified": bool(report and report.passed),
+                    "tokens": result.tokens_used,
+                    "cost_usd": result.cost_usd,
+                },
+            )
+
+            return TaskOutcome(
+                task_id=task.id,
+                status=TaskStatus.SUCCEEDED,
+                attempts=attempts,
+                verification=report,
+                tokens_used=result.tokens_used,
+                cost_usd=result.cost_usd,
+                duration_s=time.monotonic() - started,
+                patch_artifact_id=result.evidence.patch_artifact_id
+                if result.evidence
+                else None,
+            )
+
+        return outcome
+
+    # ---------------------------------------------------------- verification
+
+    async def _verify(self, task: TaskSpec, result: Any) -> VerificationReport | None:
+        """Run the acceptance criteria independently of the worker."""
+        if not task.acceptance_criteria:
+            return None
+        workspace = result.worktree_path
+        if not workspace:
+            return None
+        try:
+            return await self.gate.verify_task(
+                task,
+                workspace=Path(workspace),
+                has_changes=bool(result.changed_files),
+                evidence=result.evidence,
+            )
+        except Exception as exc:
+            return VerificationReport(
+                task_id=task.id,
+                passed=False,
+                level="validation_executed",
+                error=f"verification could not run: {exc}",
+            )
+
+    # -------------------------------------------------------------- helpers
+
+    def _fallback_brief(self, task: TaskSpec) -> TaskBrief:
+        return TaskBrief(
+            task_id=task.id,
+            role=task.role,
+            objective=task.objective,
+            description=task.description,
+            scope=task.scope,
+            acceptance_criteria=tuple(
+                c.model_dump(mode="json") for c in task.acceptance_criteria
+            ),
+            depends_on=task.depends_on,
+        )
+
+    def _cancel_task(self, task_id: str, cancelled: set[str]) -> None:
+        try:
+            self.state.transition_task(task_id, TaskStatus.CANCELLED)
+        except Exception:
+            pass
+        cancelled.add(task_id)
+
+    def _final_status(self, summary: RunSummary) -> RunStatus:
+        if summary.cancelled:
+            return RunStatus.CANCELLED
+        if summary.failed:
+            return RunStatus.COMPLETED_WITH_FAILURES
+        return RunStatus.SUCCEEDED
+
+    def _summarise(self, outcomes: dict[str, TaskOutcome], started: float) -> RunSummary:
+        succeeded = sum(1 for o in outcomes.values() if o.status is TaskStatus.SUCCEEDED)
+        failed = sum(
+            1
+            for o in outcomes.values()
+            if o.status in (TaskStatus.FAILED, TaskStatus.TIMED_OUT)
+        )
+        cancelled = sum(1 for o in outcomes.values() if o.status is TaskStatus.CANCELLED)
+        blocked = sum(1 for o in outcomes.values() if o.status is TaskStatus.BLOCKED)
+        levels: dict[str, int] = {}
+        for outcome in outcomes.values():
+            if outcome.verification:
+                levels[outcome.verification.level] = (
+                    levels.get(outcome.verification.level, 0) + 1
+                )
+        return RunSummary(
+            run_id=self.config.run_id,
+            status=RunStatus.RUNNING,
+            total_tasks=len(self.graph.tasks),
+            succeeded=succeeded,
+            failed=failed,
+            cancelled=cancelled,
+            blocked=blocked,
+            tokens_used=sum(o.tokens_used for o in outcomes.values()),
+            cost_usd=round(sum(o.cost_usd for o in outcomes.values()), 8),
+            wall_clock_s=time.monotonic() - started,
+            verification=levels,
+        )
