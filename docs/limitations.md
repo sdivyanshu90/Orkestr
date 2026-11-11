@@ -1,318 +1,102 @@
-# Limitations
-
-This document lists what `agent-squad` does **not** do, and what its results
-do **not** establish. It is deliberately long, because a system that
-presents a long feature list and a short limitations list is a system whose
-limitations have not been found yet.
-
----
-
-## 1. Verification limits
-
-### Verified does not mean correct
-
-The verification gate re-executes the acceptance criteria that were
-*specified*. If the specification is wrong, the verification is faithful and
-wrong. The gate proves: "these commands were run, in this workspace, and
-they produced these results." It does not prove: "the software is correct",
-"the change is complete", or "the requirement was met".
-
-### Acceptance criteria are only as good as the plan
-
-The chain of trust runs: request → plan → acceptance criteria → checks →
-verdict. A planner that writes weak criteria produces a run that verifies
-weakly and reports success. The runtime flags this in one case — a task with
-no deterministic criterion produces a plan warning and an advisory-only
-evidence package — but it cannot detect a criterion that is deterministic
-but wrong.
-
-### There is no independent oracle
-
-The orchestrator re-runs the *same* test suite the worker's changes are
-supposed to satisfy. If the worker wrote both the code and the test, and the
-test is trivially satisfiable, the gate will pass it. The system records the
-patch, the changed files and the check records so that a reviewer can see
-this, but it does not prevent it.
-
-### No property-based or differential testing is generated automatically
-
-The `CheckKind` vocabulary supports file, command and pytest-selector
-checks. It does not synthesise property tests from the specification. The
-`hypothesis` library is not currently a dependency.
-
----
-
-## 2. Orchestration and scheduling limits
-
-### The scheduler is local-first, single-process
-
-There is one SQLite writer and one asyncio event loop. There is no
-distributed queue, no leader election, no cross-node coordination. The
-architecture deliberately stops here (see ADR 0003), but it means:
-
-- throughput is bounded by one host;
-- a host failure loses in-flight work (the durable record survives, the
-  running worker does not);
-- there is no horizontal scaling story.
-
-### Worker affinity to a machine is not modelled
-
-Tasks are not placed on particular machines, and there is no notion of
-"this task needs the machine with the GPU". The worker pool is a semaphore.
-
-### Replanning is limited
-
-The plan is produced once, before execution. The runtime supports *bounded*
-replanning in the sense that a failed task can be retried and that
-dependencies can be re-evaluated, but there is no mechanism that
-re-decomposes the task graph in response to what execution revealed. The
-`plan.revised` event type exists and the `LLMPlanner` can be invoked again,
-but nothing calls it automatically.
-
-### Delegation depth is bounded but delegation is not implemented
-
-`TaskSpec.delegation_depth` is validated against a configured maximum
-(default 2) and cycles are rejected, but there is no runtime path in which
-an agent spawns a sub-agent. The bound is a guard for a future feature, not
-a description of a current one.
-
-### The strategy selector is a heuristic, not a learned model
-
-The selector is deterministic and explainable, and its decisions are
-recorded. It is *not* calibrated against observed outcomes. The benchmark
-reports the predictions alongside the measurements, but nothing currently
-feeds the measurements back into the thresholds. The thresholds in
-`StrategyConfig` were chosen by hand.
-
-### Critical-path estimation uses declared durations
-
-`TaskSpec.estimated_duration_s` is set by the planner. For the rule-based
-planner it comes from the request; for the LLM planner it is the model's
-estimate. Neither is calibrated against the actual execution time, so the
-predicted critical path is only as good as the estimate.
-
----
-
-## 3. Model and provider limits
-
-### The mock provider is not a model
-
-`MockProvider` is a deterministic policy that emits tool calls from a
-structured task brief. It cannot reason, cannot discover that the task is
-impossible, and cannot produce a wrong implementation that still satisfies a
-criterion. The benchmark therefore measures the *orchestration* around a
-model, not the model.
-
-### Token estimates are estimates
-
-The mock provider's usage is estimated from character counts
-(`providers/base.py:estimate_tokens`). Usage records carry an `estimated`
-flag, and the benchmark reports the reported/estimated ratio, but any
-absolute token figure from the mock path is approximate.
-
-### Context-window budgeting is approximate
-
-`AgentLoop._enforce_context_budget` trims turns by an estimated token count
-and keeps the system prompt and the task brief. It does not implement
-provider-specific context-window sizes, and the trimming is not
-provider-aware (a provider with a very small window would need a different
-strategy).
-
-### No streaming, no batching, no prompt caching
-
-The provider interface is request/response. There is no streaming, no
-request batching, and no cache-control support. Cached tokens are
-*accounted* for where the provider reports them, but the runtime never
-requests caching.
-
-### Provider fallback is coarse
-
-`ProviderRouter` falls back to the next provider only for
-`TransientModelError`. A provider that returns malformed output does not
-trigger a fallback, because the failure is a content problem, not an
-availability problem. There is no circuit breaker.
-
----
-
-## 4. Security limits
-
-The full analysis is in [`security-threat-model.md`](security-threat-model.md).
-The headline items:
-
-- **A git worktree is not a security boundary.** It isolates code, not
-  authority. A process inside a worktree can read anything the host user can
-  read.
-- **The sandbox is defence in depth, not a sandbox in the strong sense.**
-  On most hosts `unshare --net` is not permitted, so outbound network
-  access is **not** prevented — the runtime records this fact in every
-  command result rather than pretending otherwise. There is no seccomp
-  filter.
-- **The executable allow-list is not a barrier.** `python3`, `sh` and `bash`
-  are on it, so any code an agent can write can be executed.
-- **The audit log is not tamper-evident.** It is an append-only SQLite
-  table, but it is not cryptographically signed, so an attacker with write
-  access to the database can alter history.
-- **Injection detection is a signal, not a barrier.** The patterns in
-  `security/injection.py` catch known phrasings and will miss determined
-  attackers. The barrier is the capability layer, and the capability layer
-  only defends what it gates.
-- **The `git` executable is on the allow-list**, so a hostile repository can
-  execute git hooks or git configuration. Worktrees are created from the
-  repository under test.
-- **Secret redaction is pattern-based** and will miss secrets in unusual
-  formats or formats it does not recognise.
-
----
-
-## 5. Durability and recovery limits
-
-- **Recovery is manual.** `agent-squad resume` must be invoked; nothing
-  restarts a run automatically after a crash.
-- **Recovery does not undo side effects.** An interrupted attempt may have
-  already executed a command. The runtime records the interrupted attempt
-  and its idempotency key so the operator can decide, but it cannot roll
-  anything back.
-- **Exactly-once is claimed only for task state transitions.** Arbitrary
-  external effects (a command that writes to a database, an HTTP request)
-  are at-least-once.
-- **The event log grows without bound.** There is no compaction or
-  retention policy yet.
-- **There is no cross-process lease enforcement at the database level.** The
-  lease is a timestamp in the task record; a second process starting the
-  same run would have to cooperate. `resume_run` is the intended entry
-  point, but nothing prevents a second orchestrator from being pointed at
-  the same run directory.
-
----
-
-## 6. Replay limits
-
-- **Replay reconstructs decisions, not work.** The recorded transcript is
-  replayed against the control plane; no model thinks again.
-- **Replay is only as complete as the recording.** If the model exchanges
-  were not recorded, the control-plane replay cannot be attempted and the
-  replayer says so.
-- **The replayed execution is compared on task *outcomes*, not on the full
-  event stream.** A finer-grained equivalence check would be more useful.
-- **Branching from a checkpoint with a different policy is not
-  implemented.** The checkpoint machinery stores the event sequence and the
-  replay can be limited to a checkpoint, but there is no "re-run from here
-  with a different scheduler configuration" facility.
-
----
-
-## 7. Benchmark limits
-
-See [`benchmark-methodology.md`](benchmark-methodology.md) §7 and
-[`benchmark-results.md`](benchmark-results.md) §4. In short:
-
-- The provider has no latency, so **no model-latency speed-up can be
-  demonstrated**. Wall-clock differences between strategies are near the
-  noise floor.
-- The fixtures are small and synthetic; there is no SWE-bench subset.
-- The mock provider is free, so dollar figures are uninformative.
-- Every fixture was designed to succeed, so the verified completion rate had
-  no room to move and could not discriminate between strategies.
-- Trials are not randomised and all strategies share one host.
-
----
-
-## 8. Interface limits
-
-### The dashboard is read-mostly and optional
-
-The web dashboard under `dashboard/` reads real backend state. It cannot
-start a run with a full task specification from the UI beyond the simple
-form, and it does not stream model output.
-
-### The CLI is the primary interface
-
-Everything the API can do, the CLI can do, and a few things it cannot
-(for example, inspecting an individual artifact's bytes).
-
-### No multi-user support
-
-There is no authentication, no per-user namespace and no role separation
-between operators. Anyone with filesystem access to the data directory can
-approve a protected action.
-
----
-
-## 9. Codebase limits
-
-- The `Observer` layer (structured logs, spans, metrics) is present but only
-  partially wired into the runtime. The event log is the primary
-  observability surface; OpenTelemetry export is optional and off by default.
-- The `ProviderRouter`'s fallback logic has not been tested against a real
-  multi-provider outage.
-- `AgentSquadError.retryable` is set on the exception classes but the
-  scheduler's retry decision is driven primarily by the error *class*, not
-  by that flag.
-- Type checking is enforced by CI on the critical paths (verification,
-  state, provider, scheduler, runtime, models). It is not yet enforced on
-  every module, and the CI matrix has not run on GitHub-hosted runners.
-- Test coverage is broad but not exhaustive. The chaos/fault-injection
-  harness described in the roadmap is only partially realised: the
-  `failing_worker` scenario and the recovery tests cover the transient
-  provider failure and the crash-recovery paths, but worker crashes,
-  message loss, rate limiting and cancellation races are not all
-  systematically injected.
-
----
-
-## 10. What would change the conclusions
-
-The most valuable additions, in order:
-
-1. **A provider with realistic latency.** Without it the speed-up question
-   cannot be answered at all.
-2. **Adversarial fixtures** where a plausible decomposition yields a
-   plausible but incorrect result. This is the experiment that would
-   discriminate between strategies on verified completion rate.
-3. **A calibrated cost model**, so the selector's coordination-overhead
-   estimate is grounded in measured duplication rather than a constant.
-4. **A real repository corpus**, to check whether the findings hold when
-   the tasks are large and the integration risk is non-trivial.
-
-
----
-
-## 11. What the formal score does and does not mean
-
-`docs/scoring-criteria.md` is the binding policy. It requires a **named
-independent reviewer** who did not implement a criterion and who reproduces
-its critical result before that criterion can be marked `PASS`. It says
-explicitly that an author reviewing their own output does not qualify.
-
-No independent review has taken place. Accordingly
-`docs/assessment-record.yaml` reports:
-
-```text
-raw_score     = 0.0
-formal_score  = 0.0
-```
-
-Every criterion is `INCONCLUSIVE` (implemented, with in-repo evidence, but
-unreproduced by anyone but its author) or `MISSING` (the required artefacts
-do not exist).
-
-This is the policy working as designed, not a bug in the assessor. The
-record also publishes an `engineering_readiness` section — clearly labelled
-as *not* the formal score — which lists the criteria whose implementation is
-complete and which are awaiting nothing but an independent reproduction.
-
-Four criteria cannot be closed by any amount of implementation work:
-
-| Criterion | What it needs |
-|---|---|
-| `S3` | An audit by a reviewer independent of the implementation, with zero unresolved critical or high findings |
-| `U1` | 3 developers outside the implementation team, 30 consecutive days, 100 genuine runs across 3 repositories, 10 documented recovery exercises |
-| `U2` | 90 consecutive days, 10 external users, 1,000 genuine runs, 10 repositories |
-| `V4` | A second independent team reproducing V1–V3 on a separately administered machine |
-
-Three further criteria are *implementable* but not yet satisfied in this
-repository: `V1`–`V3` require a preregistered corpus of at least 60
-nontrivial tasks across 6 pinned real repositories, three model
-configurations, and three trials per cell. The repository has a synthetic
-fixture corpus and one 64-trial local sweep; that is not the same thing, and
-the sweep's timing sample carries a documented residual-server caveat.
+# Limitations and non-claims
+
+[Documentation home](README.md) · [Current status](../PROJECT_STATUS.md) · [Scoring policy](scoring-criteria.md)
+
+This page separates implementation from proof. It describes the current local
+runtime and preserves the limits of historical measurements. A feature can be
+present while its qualification evidence remains missing or inconclusive.
+
+## Acceptance is only as strong as its oracle
+
+The request contract prevents a planner from legitimately weakening owner
+criteria. The final candidate gate uses full predicate results and distinguishes
+new results, preserved invariants and unsupported no-ops. These improve the
+acceptance boundary; they do not turn an incomplete test into a complete
+specification. Free text without independently declared outcomes cannot establish
+independent request acceptance.
+
+Worker-created tests alone are not an independent oracle. Protected paths and
+post-run hashes are useful but do not, by themselves, establish that an arbitrary
+worker command could not read or temporarily alter evaluator material. This
+boundary needs qualified containment and independent review.
+
+Execution status and the contract verdict remain separate. The CLI currently
+uses execution status for its exit code; callers requiring acceptance must
+inspect `contract.outcome`. `--no-integrate` does not perform the normal final
+combined-tree judgment. A finished worker or zero exit code is not a request-
+acceptance API.
+
+## Containment depends on the execution profile and host
+
+Git worktrees isolate source trees, not host authority. Development mode is best
+effort. Hardened execution uses a real containment backend and required probes,
+and refuses unsupported boundaries. A private HOME variable or a command scanner
+alone is not filesystem isolation. The supported hardened environment requires
+Linux capabilities beyond merely installing bubblewrap.
+
+The provider adapter remains a host-side component with its own data/network
+exposure. API authentication, multi-user approvals, public tenancy, distributed
+workers and cross-host coordination are not established deployment features.
+The append-oriented database is not cryptographically protected from its owner.
+
+## Resource mechanisms require end-to-end evidence
+
+The implementation includes phase deadlines, cancellation context, resource
+registries, ownership/fencing, durable deduplication and reconciliation. This is
+stronger than the older helper-only implementation. It still does not justify a
+universal claim that every synchronous startup, constructor, signal, process
+group or close path is bounded and safe on every host. Test the complete entry
+point and declared environment.
+
+Exactly-once task-state transitions do not make arbitrary external effects
+exactly-once. Recovery can encounter commands whose effects occurred before their
+acknowledgment was recorded. Such effects need idempotency or reconciliation.
+
+Model placement is hardware/configuration dependent. Requested GPU layers and
+concurrency settings are not proof of actual memory fit, offload, useful
+parallelism or throughput. No hosted charge means no hosted bill, not zero local
+energy/hardware cost.
+
+## The evidence is deliberately narrower than a product guarantee
+
+- The original deterministic benchmark uses known mock behavior and synthetic
+  fixtures. It does not demonstrate model reasoning or coding improvement.
+- The historical real-model workflow report records then-current worker gates,
+  not the newer independent contract semantics. Do not reinterpret those flags
+  as independently accepted code repairs.
+- The original direct inference comparison has five tiny prompts per model/device
+  configuration and a residual-server timing caveat. It is not a clean hardware
+  ranking or a general model leaderboard.
+- The later clean timing sample measures three configurations and verifies
+  ownership. It demonstrates the mechanism, not the whole qualification study.
+- Generated adversarial cases exercise selected mechanisms. Separate randomness
+  and filenames do not by themselves establish independent real-world failures.
+- The required held-out real-repository value study, implementation-independent
+  security review and sustained external operational record remain separate
+  qualification requirements.
+
+## Reproducibility and support
+
+The package metadata allows Python 3.11+, but the declared release matrix is
+Linux x86-64 on Python 3.11–3.13. Development on another interpreter is not a
+release qualification. CI configuration is not evidence that every matrix cell
+passed. Optional API/dashboard dependencies also need explicit installation and
+validation; there is no `api` extra in the current package metadata.
+
+Changing source, dependencies, model/template, verifier or effective configuration
+can invalidate evidence. The checked-in assessment belongs to its pinned release
+and may lag HEAD. Passing local checks does not silently promote inconclusive
+criteria to PASS. A complete formal assessment requires the
+[strict scoring policy](scoring-criteria.md), including independent review.
+
+## Work intentionally deferred
+
+The selector remains a heuristic whose empirical benefit needs held-out evidence.
+Bounded replanning exists, but it is not an unrestricted autonomous supervisor.
+Delegation-depth fields do not establish a general runtime for arbitrary spawned
+agents. Distributed scheduling, public multi-tenancy and unrestricted deployment
+are outside the present qualified scope. Retention and long-history performance
+need explicit policy and measurement before scale claims.
+
+The [roadmap](roadmap.md) defines next work. This page must not be “resolved” by
+deleting limitations without the corresponding code and qualifying evidence.

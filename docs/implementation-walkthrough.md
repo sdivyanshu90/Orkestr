@@ -1,497 +1,149 @@
 # Implementation walkthrough
 
-A guided tour of the code, following one request from the command line to a
-verified patch bundle. Every function named here exists in the tree at the
-time of writing.
-
----
-
-## 0. The shape of the thing
-
-```mermaid
-flowchart TB
-    REQ["Request + acceptance criteria"]
-    CON["RequestContract<br/>immutable, content-hashed"]
-    PLAN["Planner<br/>rule-based or model-backed"]
-    GRAPH["TaskGraph<br/>DAG with dependencies"]
-    STRAT["Strategy selector<br/>single · parallel · sequential"]
-    SCHED["Scheduler<br/>async, dependency-aware"]
-    WT["Per-task worktree<br/>git worktree at the base revision"]
-    RUN["Worker<br/>tools under a capability set"]
-    PATCH["Patch artifact<br/>content-addressed"]
-    INT["Integration engine<br/>ordered, conflict-aware"]
-    CAND["Combined candidate tree"]
-    GATE["Contract gate<br/>independent re-execution"]
-    VERDICT["Verdict<br/>accepted · rejected · inconclusive"]
-
-    REQ --> CON
-    CON --> PLAN
-    PLAN --> GRAPH
-    GRAPH --> STRAT --> SCHED
-    SCHED --> WT --> RUN --> PATCH
-    PATCH --> INT --> CAND
-    CAND --> GATE
-    CON -.->|the required outcomes| GATE
-    GATE --> VERDICT
-
-    classDef trust fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
-    classDef untrust fill:#3b1f1f,stroke:#e06c6c,color:#f5f5f5
-    class REQ,CON trust
-    class WT,RUN,PATCH,INT untrust
-```
-
-The single most important line in that diagram is the dashed one: the
-**required outcomes** come from the owner's contract, not from the
-plan and not from the worker. Everything else in the system can be
-produced by a model; the contract cannot. That is what makes the verdict
-at the end an independent judgement rather than the model's opinion of
-its own work.
-
-```
-agent-squad run "..." --repo . --spec request.json
-        │
-        ▼
-  cli/main.py :: cmd_run
-        │
-        ▼
-  orchestrator.py :: Orchestrator.run
-        │
-        ├── RepositoryInspector.inspect        (read-only repo survey)
-        ├── build_planner(...).plan(...)       (rule-based or LLM)
-        ├── TaskGraph.validate / topological_order
-        ├── StrategySelector.select            (deterministic decision)
-        ├── Scheduler.run                      (asyncio, bounded concurrency)
-        │      └── WorkerRunner.execute
-        │             ├── WorktreeManager.create      (git worktree)
-        │             ├── AgentLoop.run               (model ↔ tool loop)
-        │             ├── PolicyEngine.authorize      (capability check)
-        │             └── ToolRegistry                (actual side effects)
-        ├── VerificationGate.verify_task      (independent re-execution)
-        ├── IntegrationEngine.integrate        (patch combination + conflicts)
-        └── EventLog / ArtifactStore           (durable record)
-```
-
----
-
-## 1. Configuration: everything is data
-
-`src/agent_squad/config.py`
-
-Every knob that affects behaviour lives in a pydantic model that is
-`frozen=True` and `extra="forbid"`. A typo in a TOML config file raises
-rather than silently disabling a safety control.
-
-```python
-config = RunConfig(
-    run_id="run_01JQ...",
-    repo_path="/path/to/repo",
-    provider={"name": "mock", "model": "mock-deterministic-v1"},
-    scheduler={"max_workers": 4},
-    verification={"integration_test_command": ("python3", "-m", "pytest", "-q")},
-)
-```
-
-The configuration is serialised to `run-config.json` inside the run
-directory. That file is what makes a run reproducible: the replay machinery
-reads it back rather than asking the operator to reconstruct it.
-
----
-
-## 2. The task specification and its lifecycle
-
-`src/agent_squad/models/task.py`
-
-`TaskSpec` is the immutable description; `TaskState` is the mutable
-execution state. The two are separated so that a replan can replace a
-specification without losing the execution history.
+[Documentation home](README.md) · [Architecture](architecture.md) · [Deep dive](deep-dive.md)
 
-The lifecycle is a table, not a set of `if` statements:
+Read this alongside the source. This is a path through the current implementation,
+not a promise that every helper is exercised by every product surface. Package
+paths are relative to `src/agent_squad/`.
 
-```python
-LEGAL_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
-    TaskStatus.PENDING: frozenset({READY, BLOCKED, CANCELLED}),
-    TaskStatus.READY:   frozenset({RUNNING, PENDING, BLOCKED, CANCELLED}),
-    TaskStatus.RUNNING: frozenset({SUCCEEDED, FAILED, TIMED_OUT,
-                                   RETRY_SCHEDULED, AWAITING_APPROVAL,
-                                   CANCELLED, READY, BLOCKED}),
-    ...
-}
-```
+## 1. Start at the entry points
 
-Every status change goes through `assert_transition`, which raises
-`ValidationError` on an illegal move. The scheduler, the recovery path and
-the CLI all mutate state through the same guarded API, so an illegal
-transition is a bug that surfaces immediately rather than a subtly corrupt
-run.
+`cli/main.py` parses commands, loads the request JSON and merges configuration
+overrides. `cmd_run` constructs an orchestrator, calls its asynchronous run, and
+closes it in `finally`. JSON and human-readable output expose related information,
+but the exit code currently uses execution status; inspect the contract verdict
+separately for acceptance.
 
-`RUNNING → READY` exists specifically for recovery: a worker that died
-returns its task to the queue.
+`api/server.py` builds an optional FastAPI application. Its create-run request has
+a narrower schema than RunConfig and starts work in the background. Read paths
+open the same durable databases. The service is a local control surface, not an
+authentication or multi-tenant authority layer.
 
----
+`plan` builds provider/planner/inspection context and returns a proposal without
+running worker edits. A real planner can make paid or remote model requests.
 
-## 3. The graph
+## 2. Understand configuration and persistent paths
 
-`src/agent_squad/dag/graph.py`
+`config.py` contains validated run, provider, scheduler, sandbox, approval and
+verification options. Sample TOML is illustrative. `orchestrator.py` establishes
+the run paths, saves configuration, creates private HOME/cache directories,
+opens SQLite and loads/reconciles the resource registry.
 
-The graph is the central structure: it encodes *what may run when*, and
-therefore everything that must be validated before any worker is dispatched.
+Initialization has effects. Use the dedicated store/inspection interfaces when
+only reading a run. Review constructor/reconciliation order when changing run
+ownership so another owner's resources are not treated as abandoned prematurely.
 
-`TaskGraph.validate()` raises `DependencyError` for structural problems that
-make execution impossible (cycle, dangling dependency, delegation depth) and
-returns a list of soft warnings for policy problems (a task with no
-deterministic acceptance criteria).
+## 3. Read the request and plan models
 
-Two properties of the graph are used directly by the strategy selector:
+`models/task.py` defines tasks, scope, budgets, criteria and lifecycle rules.
+`models/contract.py` defines owner outcomes and the explicit verdict vocabulary.
+`planning/contract.py` derives requirements from owner input, not model output.
+Semantic criterion identity prevents a reused ID from hiding a different check.
 
-- `parallel_width()` — the maximum number of tasks that could run at once.
-- `critical_path()` — the longest dependency chain by estimated duration.
+`planning/planner.py` provides deterministic and model-backed planners.
+`planning/brief.py` carries task-specific context, including the mock's concrete
+edit hints. `planning/replan.py` validates bounded revisions while preserving the
+contract and completed work.
 
-and one by the integration engine:
+The distinction to trace is request → contract versus request → proposed plan.
+The same model must not be allowed to weaken the former while producing the latter.
 
-- `scope_overlaps()` — which pairs of tasks anticipate touching the same
-  files.
+## 4. Follow the graph into scheduling
 
----
+`dag/graph.py` validates dependencies and computes graph properties. The strategy
+selector evaluates estimated durations and coordination/file-overlap costs.
+`scheduler/engine.py` drives ready tasks, concurrency, retries, deadlines and
+blocked dependents. State ownership and attempt fences protect against stale
+results and competing execution.
 
-## 4. Planning
+Find where timeout and cancellation become an explicit outcome. Then find where
+that outcome reaches the persisted state and downstream dependency handling.
+A correctly timed-out coroutine is insufficient if its process group survives.
 
-`src/agent_squad/planning/`
+## 5. Trace one worker call
 
-Three pieces:
+`agents/runner.py` creates the task workspace, registers actors/tools and builds
+the role context. `agents/base.py` runs bounded model/tool turns. The loop consults
+policy before executing tools, records model and tool observations, and returns
+a worker result for verification and patch capture.
 
-**`inspector.py`** surveys the repository read-only: file counts, languages,
-test files, manifests. It never executes anything from the repository, it
-does not follow symlinks, and it scans file contents for injection patterns.
-Its output is deliberately shallow — context explosion starts with fetching
-whole files into the orchestrator.
+`tools/` contains file, command and Git operations. `security/policy.py` and
+capability checks gate their use. `agents/approval.py` waits for durable human
+decisions; `security/approval.py` describes bound grants. Track the exact action
+and arguments rather than treating a previous “yes” as general permission.
 
-**`brief.py`** defines `TaskBrief`: the structured contract between the
-planner and a worker. It is data, not a prompt. The worker renders it into a
-prompt; the runtime can validate it.
+## 6. Cross the provider boundary
 
-**`planner.py`** provides two planners with the same output type:
+`providers/registry.py` constructs adapters and routes fallbacks under per-provider
+semaphores. `openai_compat.py` and `anthropic.py` translate the internal request
+into their protocol shapes. `mock.py` emits deterministic calls from briefs.
+`ledger.py` records attempts, phase, timing, error and usage provenance.
 
-- `RuleBasedPlanner` consumes a structured request (JSON) and materialises
-  exactly the tasks described. It is the planner used with the mock
-  provider, and the one used by the benchmark harness.
-- `LLMPlanner` asks a model for the same structure, then validates it.
-  Model output that does not validate is a hard failure: the orchestrator
-  never "repairs" a plan by guessing what the model probably meant.
+Follow a planner call, a worker retry and a fallback to confirm they share the
+run's accounting context. Recorded model exchanges for replay are a separate
+artifact responsibility; a wrapper must not disconnect the real provider ledger.
 
-```python
-plan = await planner.plan(PlanRequest(...))
-graph = plan.graph()          # a validated TaskGraph
-```
+## 7. Read containment with the command runner
 
----
+`sandbox/limits.py` builds the command environment, applies resource limits,
+executes commands and reports timeout/isolation information.
+`sandbox/containment.py` constructs the bubblewrap boundary and probes observed
+properties. `security/profiles.py` chooses required capabilities and refuses
+unsupported hardened execution.
 
-## 5. The strategy selector
+Do not infer filesystem isolation from a private HOME variable or Git worktree.
+Check actual bind paths, process/network namespaces, command execution and the
+host's capability to enforce them. The development profile has weaker promises.
 
-`src/agent_squad/strategy/`
+## 8. Follow evidence through both gates
 
-`CoordinationModel` estimates the benefit of parallelism (Amdahl-like, from
-the critical path fraction and the graph's parallel width) and its cost
-(coordination tokens, context duplication, integration risk from shared
-files).
+`verification/checks.py` executes predicates and builds full check records.
+`verification/gate.py` judges task evidence. `integration/engine.py` applies and
+checks patches in staging. `verification/contract_gate.py` judges the final
+candidate against the owner contract, base observations and candidate identities.
+`verification/protected.py` supplies protected-material capture/tamper checking.
 
-`StrategySelector.select` compares the candidate worker counts and picks one.
-It is **deterministic**: the same graph and configuration always produce the
-same decision, which is a hard requirement for replay and for auditing.
+Start with the exit-zero output-mismatch regression: the check can fail despite
+exit code zero. Trace how its error survives into the final verdict. Then read
+the preserved-invariant and valid-no-op cases, where base/candidate semantics
+matter more than a simple “changed file” boolean.
 
-The decision carries its reasoning:
+## 9. Inspect persistence and recovery
 
-```python
-StrategyDecision(
-    strategy=StrategyName.STATIC_TWO,
-    worker_count=2,
-    estimated_parallel_speedup=1.83,
-    rationale=(
-        "serial execution estimated at 120.0s; best parallel option uses 2 worker(s) at ~65.6s",
-        "parallelism improves estimated wall-clock time by 45.3%",
-        "selected the static 2-agent strategy because the graph width and budget both support a fixed worker count",
-    ),
-)
-```
+`store/db.py` owns schema/transactions. `store/events.py` defines the event
+vocabulary and append operations. `store/state.py` exposes projections, task
+transitions, ownership, approvals and message state. Artifact stores bind data
+to content identities and provenance.
 
-The selector can also decline to parallelise at all, and it must: a single
-task, or a graph whose width is 1, or a budget that cannot absorb the
-overhead, all resolve to `StrategyName.SINGLE`.
+`recovery.py` reconstructs state and resumes eligible work under ownership.
+`runtime/effects.py` classifies effects whose replay/retry may be ambiguous.
+`replay/replayer.py` reconstructs recorded control execution in scratch state.
+Changing these paths requires crash-boundary and schema compatibility evidence.
 
----
+## 10. Close the lifecycle
 
-## 6. The scheduler
+`runtime/deadline.py` binds phase/deadline/cancellation scope. `runtime/registry.py`
+persists owned processes and artifacts. Orchestrator teardown closes providers,
+reclaims processes/workspaces and removes private HOME material. Explicit debug
+retention has a different lifecycle from abandoned resources.
 
-`src/agent_squad/scheduler/engine.py`
+Read normal completion, startup failure, cancellation, signal and resume paths.
+A lifecycle guarantee is a property of this whole composition, not just the
+cleanup helper or a unit test that explicitly calls it.
 
-The scheduler owns the ready queue, the concurrency limit, retries,
-deadlines and cancellation.
+## Tests to read next
 
-```python
-while pending or running:
-    newly_blocked = graph.blocked_by_failure(failed) - blocked - completed
-    ...
-    ready = [t for t in pending if all(dep in completed for dep in t.depends_on)]
-    while ready and len(running) < self.max_workers:
-        running[asyncio.create_task(self._execute(task))] = task.id
-    done, _ = await asyncio.wait(running.keys(), return_when=FIRST_COMPLETED)
-```
-
-`_execute` runs one task through its attempts:
-
-```
-start_attempt()          # increments the attempt, takes a lease
-transition RUNNING
-  ├─ worker ok → verify → SUCCEEDED
-  ├─ worker failed → FAILED → (retry) READY
-  ├─ timeout     → TIMED_OUT → RETRY_SCHEDULED → READY
-  └─ cancelled   → CANCELLED
-```
-
-Three properties are worth calling out:
-
-**Attempt fencing.** `StateStore.transition_task(..., attempt=N)` refuses an
-update whose attempt does not match the stored one. A late message from a
-superseded worker is rejected rather than overwriting a newer result.
-
-**Stacked worktrees.** A task with dependencies starts from the head
-produced by its last completed dependency, so dependent work sees the
-changes it depends on. The patch a task produces is relative to *that* base,
-which is why integration replays patches in dependency order.
-
-**Deterministic backoff.** The jitter is derived from
-`hashlib.sha256(run_id:task_id:attempt)` rather than randomness, so it
-de-synchronises concurrent workers while remaining reproducible across
-processes and across replays.
-
----
-
-## 7. The worker
-
-`src/agent_squad/agents/runner.py` and `src/agent_squad/agents/base.py`
-
-`WorkerRunner.execute` is the unit that actually does work:
-
-1. create a detached git worktree at the task's base revision;
-2. build the tool context and the prompt from the brief;
-3. run the bounded agent loop;
-4. stage the changes and capture the diff as a content-addressed patch
-   artifact;
-5. commit the worktree so dependents can be based on it;
-6. build a proof-carrying evidence package;
-7. publish the artifacts and report the outcome.
-
-`AgentLoop.run` is the model/tool loop:
-
-```python
-for iteration in range(self.max_iterations):
-    response = await self.provider.complete(request)
-    if not response.tool_calls:
-        ok = True
-        break
-    for call in response.tool_calls:
-        result = await self._invoke_tool(call, tool_context, capabilities)
-        messages.append(ChatMessage(role="tool", content=render(result), ...))
-```
-
-Three limits bound it, each with a distinct outcome: the iteration limit, the
-turn token limit, and the task's token/cost ceiling.
-
-`_invoke_tool` is where authorisation happens:
-
-```python
-decision = self.policy.authorize(
-    run_id=..., actor=..., capabilities=capabilities,
-    tool=call.name, arguments=call.arguments,
-    scope_root=..., scope_patterns=...,
-)
-if decision.decision is DENY:
-    return ToolResult(ok=False, error="policy denied this call: ...", error_class="policy")
-if decision.decision is REQUIRE_APPROVAL:
-    approved = await self.approver(action=..., rationale=..., ...)
-    if not approved:
-        return ToolResult(ok=False, error="this action requires human approval ...")
-```
-
-A denial is returned to the model as a tool error — the agent can adapt —
-but the tool never runs.
-
-Tool results are wrapped before returning to the model:
-
-```python
-body = wrap_untrusted(redact_secrets(payload), source=f"tool:{call.name}")
-```
-
-Untrusted content is fenced as data. The mechanism is labelling plus
-labour; the actual barrier is the capability layer.
-
----
-
-## 8. Verification
-
-`src/agent_squad/verification/`
-
-The gate re-executes the acceptance criteria itself, in the task's
-worktree, and records what happened:
-
-```python
-report = await self.gate.verify_task(
-    task, workspace=Path(worktree), has_changes=bool(result.changed_files),
-    evidence=result.evidence,
-)
-```
-
-`CheckKind` selects the executor: `file_exists`, `file_contains`,
-`file_not_contains`, `command_exits_zero`, `command_output_matches`,
-`pytest_selector`, `diff_nonempty`, `diff_empty`. Two kinds —
-`llm_review` and `manual` — have **no deterministic executor** and are
-reported as `advisory`, never as passed.
-
-The report carries a `level`:
-
-```
-none → worker_reported → patch_produced → validation_executed
-     → checks_passed → integration_validated → human_approved
-```
-
-`checks_passed` means: the specified checks ran and produced these
-results. Not that the change is correct.
-
----
-
-## 9. Integration
-
-`src/agent_squad/integration/engine.py`
-
-Patches are applied in dependency order to a fresh integration worktree.
-Before each application the engine compares the *tree* the patch was
-computed against with the integration tree's current tree:
-
-```python
-expected_tree = patch.base_tree or self._tree_of(patch.base_revision)
-if expected_tree and current_tree and expected_tree != current_tree:
-    # stale patch -> rejected
-```
-
-Trees are compared rather than commit ids because the integration engine
-creates its own commits for the same content.
-
-Overlapping file modifications are detected *before* application, so the
-operator gets an explanation rather than a merge-conflict dump. Any
-unresolved conflict is a hard failure: the engine never "resolves" a
-conflict by guessing.
-
-The integration test command is then run against the combined tree. If it
-fails, the integration fails — even though every individual worker reported
-success.
-
----
-
-## 10. Durable state
-
-`src/agent_squad/store/`
-
-`Database` wraps SQLite in WAL mode. `EventLog` is append-only;
-`StateStore` holds the projections.
-
-The invariant that matters:
-
-> The event log is the source of truth. The projection tables are derived
-> and can always be rebuilt by replaying the log.
-
-The event append and the projection update happen in one transaction
-(`BEGIN IMMEDIATE`), so a crash can leave the projection behind — which
-`StateStore.rebuild_projection` repairs — but never the reverse.
-
-`StateStore.transition_task` enforces the lifecycle table and the attempt
-fence in the same transaction that writes the event.
-
----
-
-## 11. Recovery
-
-`src/agent_squad/recovery.py`
-
-```python
-report = recover_run(run_id, data_dir=data_dir)
-result = await resume_run(run_id, data_dir=data_dir)
-```
-
-`recover_run` rebuilds the projection from the log, then classifies each
-task. A task that was `RUNNING` when the process died is *not* assumed to
-have finished: if its lease has expired and it has attempt budget left, it
-returns to the ready queue; if it has no budget left, it is blocked.
-
-`resume_run` then re-reads the configuration and the plan from durable
-storage and restarts the scheduler from that point. Work that already
-succeeded is not repeated.
-
-Recovery does not undo side effects. `verify_side_effects` lists the
-attempts that started but never recorded an outcome, with their idempotency
-keys, so that an operator or a reconciliation job can decide what to do.
-
----
-
-## 12. Replay
-
-`src/agent_squad/replay/`
-
-`RecordingProvider` wraps the provider and records every exchange as an
-artifact. `RecordedProvider` serves those recorded responses without any
-network call.
-
-`replay_run` reconstructs the state machine from the event log (not from the
-projection — the point is to be independent of the original process) and
-returns the recorded decisions, the transition sequence and the final state.
-
-With `execute=True` it re-runs the *control plane* against the recorded
-transcript and reports whether the replayed execution produced the same
-task outcomes. It is a replay, not an evaluation: the model never thinks
-again.
-
----
-
-## 13. The benchmark
-
-`src/agent_squad/benchmark/`
-
-`run_suite` runs every scenario under every strategy on a freshly created
-repository, then derives the metrics from each run's own event log. The
-harness contains no hard-coded expectations about a scenario's outcome,
-because a benchmark that knows the answer is not a benchmark.
-
-`render_report` prints the aggregate table and *every* comparison against
-the baseline, including the ones where the candidate lost.
-
----
-
-## 14. A complete trace through the mock provider
-
-The mock provider is not a stub. It reads a structured task brief from the
-prompt and emits genuine tool calls:
-
-```
-prompt ──▶ AgentLoop ──▶ MockProvider.complete()
-                             │
-                             ├─ parses the brief (BRIEF_START … BRIEF_END)
-                             ├─ emits write_file calls for each edit
-                             ├─ emits run_command calls for each command
-                             └─ on the second call (tool results present)
-                                emits a summary and no further tool calls
-```
-
-That is why the offline path produces real diffs, real test runs and real
-integration conflicts — the parts of the system most likely to be wrong are
-actually exercised.
-
----
-
-## 15. Where to start reading
-
-| If you want to understand… | Read |
+| Concern | Starting point |
 |---|---|
-| What the system does | `docs/architecture.md` |
-| Why it is built this way | `docs/design-decisions/` |
-| What it cannot do | `docs/limitations.md` |
-| What can go wrong and what happens | `docs/reliability.md` |
-| Who might attack it and how | `docs/security-threat-model.md` |
-| Whether multi-agent helps | `docs/benchmark-results.md` |
+| Acceptance predicates and no-op/invariant semantics | `tests/evaluation/test_adversarial_contracts.py` |
+| Immutable contract semantics | `tests/unit/test_contract_immutability.py` |
+| Provider accounting | `tests/unit/test_provider_ledger.py`, `tests/integration/test_request_ledger.py` |
+| Deadline phases | `tests/unit/test_deadline_phases.py`, `tests/integration/test_deadline_phases.py` |
+| Owned resources and crash authority | `tests/recovery/test_resource_bounds.py`, `tests/recovery/test_authority_and_ownership.py` |
+| Integrated teardown | `tests/lifecycle/test_lifecycle_matrix.py` |
+| Containment | `tests/integration/test_hardened_containment.py` |
+| Replay | `tests/integration/test_replay.py` |
+
+Paths in this table are repository-relative. A reading list is not a claim that
+the current release passed the full suite. Use [reproduction](reproduction.md)
+and record the exact commands/environment when producing evidence.

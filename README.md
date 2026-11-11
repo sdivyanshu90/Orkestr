@@ -1,360 +1,148 @@
-# agent-squad
+# Orkestr
 
-**Adaptive, verifiable multi-agent software engineering runtime.**
+**A local-first runtime for planning, executing and reviewing software-engineering work with agents.**
 
-`agent-squad` takes a repository engineering request, decomposes it into a
-validated task DAG, schedules specialised agents against that DAG, isolates
-their work in separate git worktrees, integrates the resulting patches under
-a real verification boundary, and records enough evidence for a human to
-audit what happened.
+Orkestr turns a repository request into a graph of tasks, runs workers in Git
+worktrees, checks their changes, combines their patches, and records the result
+for inspection and recovery. Its Python distribution and CLI are named
+`agent-squad`; its source package is `agent_squad`.
 
-The distinguishing property of this system is not that "the agents can talk to
-each other". It is that the system can **explain, enforce, recover and
-empirically validate** how multiple autonomous agents cooperate on a real
-engineering problem — and that it is willing to report that in some cases
-they do not cooperate well at all.
+The central distinction is **a worker finished** versus **the original request
+was accepted**. The first is an execution outcome. The second requires a final
+candidate tree evaluated against the owner's request contract. Neither is a
+proof of correctness beyond the checks that were actually required and run.
 
----
+[Documentation home](docs/README.md) · [In-depth project guide](docs/project-guide.md)
+· [Quickstart](docs/getting-started.md) · [Current status](PROJECT_STATUS.md)
 
-## Why it exists
+## What it does
 
-Multi-agent systems are usually sold on intuition: more agents, more
-parallelism, better outcomes. That intuition is not supported by evidence,
-and the overhead of coordination is real. This project treats the question
-as a research problem:
+1. Inspect the target repository and build an owner-defined request contract.
+2. Produce and validate a task DAG, including dependencies and scope.
+3. Select a scheduling strategy and dispatch bounded worker attempts.
+4. Mediate tool access, protected actions, resource limits and cancellation.
+5. Verify task changes, integrate candidate patches in a staging worktree, and
+   judge the combined tree against the original contract.
+6. Return a reviewable patch bundle, structured outcomes, usage records and
+   durable events. Internal worktrees may contain generated commits; the normal
+   run does not publish a commit or update a remote branch for you.
 
-> **Under which conditions can adaptive multi-agent orchestration improve
-> verified task completion, latency, or cost efficiency compared with a
-> well-engineered single-agent system?**
+```mermaid
+flowchart LR
+    R[Owner request] --> C[Request contract]
+    R --> P[Validated task graph]
+    P --> S[Scheduler and workers]
+    S --> W[Worktree patches]
+    W --> I[Combined candidate]
+    C --> V[Contract verifier]
+    I --> V
+    S --> E[Events and artifacts]
+    V --> E
+    E --> H[Human review]
+```
 
-The runtime is built so that this question can be *answered with recorded
-data* rather than asserted. See [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md)
-and [`docs/benchmark-results.md`](docs/benchmark-results.md) — including the
-negative results.
+## Start here
 
----
-
-## The verification ladder
-
-The system distinguishes six states. They are strictly ordered and are never
-conflated:
-
-| Level | Meaning | What it does **not** prove |
-|---|---|---|
-| `worker_reported` | An agent said it finished | Anything. It is a claim. |
-| `patch_produced` | A diff exists and its hash is known | That the diff is correct |
-| `validation_executed` | The orchestrator ran the specified checks | That the checks passed |
-| `checks_passed` | Those checks ran and exited zero | That the change is correct overall |
-| `integration_validated` | The *combined* result of all patches was re-verified | That the system behaviour is correct |
-| `human_approved` | A person authorised a protected action | — |
-
-A test runner producing exit code 0 is a **recorded result for the specific
-selector that was run**. It is not a proof of correctness, and the runtime
-never describes it as one.
-
----
-
-## Installation
+The documented release matrix is Linux x86-64 with Python 3.11–3.13. The package
+metadata permits Python 3.11+, but that broader range is not the same as release
+qualification. Git must be available. The hardened execution profile additionally
+needs a usable containment backend; unsupported containment is refused.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+# From the repository root, using a supported interpreter:
+python3.11 -m venv .venv
+. .venv/bin/activate
+python -m pip install --require-hashes -r requirements.lock
+python -m pip install --no-deps -e .
+agent-squad --help
 ```
 
-Python 3.11+ is required. `git` must be on `PATH`.
+For an editable development environment outside the release-lock procedure,
+`python -m pip install -e '.[dev]'` installs the declared development extra.
+That is a different reproducibility claim. FastAPI and uvicorn are optional
+service dependencies; there is currently no `api` extra in `pyproject.toml`.
 
-Optional extras:
+The [quickstart](docs/getting-started.md) creates a disposable repository and
+runs the supplied rounding request with the deterministic mock provider. No
+model download or paid API is required. The mock exercises actual file tools,
+worktrees, checks and integration; it does not demonstrate model reasoning.
+
+## Use a model endpoint
 
 ```bash
-pip install -e ".[otel]"    # OpenTelemetry export
-pip install -e ".[api]"     # FastAPI service + uvicorn  (also installs httpx)
+agent-squad run "Implement the declared request" \
+  --repo /absolute/path/to/repository \
+  --spec /absolute/path/to/request.json \
+  --provider openai_compat --model YOUR_SERVED_MODEL \
+  --base-url http://127.0.0.1:8081/v1 --json
 ```
 
----
+An OpenAI-compatible adapter and an Anthropic adapter are implemented. Endpoint
+compatibility still depends on its chat, tool and structured-output behavior.
+An Anthropic-shaped API is not automatically interchangeable with an
+OpenAI-compatible endpoint. Configure credentials through the named environment
+variable and provider configuration; see [configuration](docs/configuration.md).
 
-## Quick start (no API key required)
+Without owner-supplied acceptance criteria, a run may produce useful work but
+cannot establish independently defined request acceptance. With `--no-integrate`,
+the final combined candidate is not judged through the normal integration path.
+Inspect the returned `contract` field, not only the task status or CLI exit code.
 
-The deterministic mock provider drives *real* tool calls, so the whole
-pipeline — planning, worktree isolation, patching, verification, integration
-— runs offline and produces identical results on every machine.
+## Understand the outcome
 
-```bash
-# 1. Create a small repository to work on
-mkdir demo && cd demo
-git init -b main
-cat > calc.py <<'PY'
-def add(a, b):
-    return a + b
-
-
-def subtract(a, b):
-    return a - b
-PY
-mkdir -p tests
-cat > conftest.py <<'PY'
-import os
-import sys
-sys.path.insert(0, os.path.dirname(__file__))
-PY
-cat > tests/test_calc.py <<'PY'
-from calc import add, subtract
-
-
-def test_add():
-    assert add(2, 3) == 5
-
-
-def test_subtract():
-    assert subtract(5, 2) == 3
-PY
-git add -A && git commit -m "initial"
-
-# 2. Plan the work (no side effects)
-agent-squad plan "Add a rounding helper and test it" \
-    --repo . --spec ../agent-squad/examples/request-rounding.json
-
-# 3. Run it
-agent-squad run "Add a rounding helper and test it" \
-    --repo . --spec ../agent-squad/examples/request-rounding.json --json | jq '.summary'
-```
-
-Two ready-made requests ship with the project:
-`examples/request-rounding.json` (two tasks, the second depending on the
-first) and `examples/request-parallel.json` (two independent tasks). The
-[examples README](examples/README.md) documents the request format.
-
-The run writes everything under `.agent-squad/runs/<run-id>/`:
-
-```
-.agent-squad/runs/<run-id>/
-├── state.db            # append-only event log + projections (SQLite, WAL)
-├── run-config.json     # the exact configuration the run used
-├── artifacts/          # content-addressed patches, evidence, exchanges
-├── worktrees/          # per-task git worktrees
-├── logs/
-└── patch-bundle.diff   # a reviewable bundle; nothing is committed or pushed
-```
-
----
-
-## Using a real model
-
-```bash
-export OPENAI_API_KEY=...          # the key is read from the environment only
-agent-squad run "Refactor the parser" \
-    --repo . \
-    --provider openai_compat \
-    --model gpt-4o-mini \
-    --base-url https://api.openai.com/v1
-```
-
-Any OpenAI-compatible endpoint works — vLLM, llama.cpp's server, Ollama,
-LM Studio:
-
-```bash
-agent-squad run "..." --repo . \
-    --provider openai_compat --model qwen2.5-coder \
-    --base-url http://localhost:8000/v1
-```
-
-Anthropic is supported through the `anthropic` provider (see
-`src/agent_squad/providers/anthropic.py`). Configuration files in TOML are
-supported via `--config`; see [`configs/`](configs/).
-
----
-
-## CLI
-
-| Command | Purpose |
+| Signal | What it establishes |
 |---|---|
-| `agent-squad run` | Execute an orchestration run |
-| `agent-squad plan` | Produce and print a plan without executing it |
-| `agent-squad status <run>` | Show task states, token use and cost |
-| `agent-squad inspect <run>` | Inspect tasks, events, artifacts, messages, decisions |
-| `agent-squad approve <id>` | Answer a pending human-approval request |
-| `agent-squad cancel <run>` | Cancel a run |
-| `agent-squad resume <run>` | Recover and continue an interrupted run |
-| `agent-squad replay <run>` | Replay a recorded run from its event log |
-| `agent-squad benchmark` | Run the orchestration efficiency laboratory |
+| Worker/task status | Whether execution and task checks completed |
+| Evidence ladder | Which kinds of evidence were recorded for a task |
+| Contract verdict | Whether the candidate met the declared request checks |
+| Human approval | Authorization for a particular protected action |
+| Formal project qualification | Independent evidence under the scoring policy |
 
-Every command accepts `--json` for scripting.
+These signals are related, but none is a substitute for the others. A passing
+fixture, approved command or `succeeded` task does not certify a production fix.
 
-```bash
-agent-squad status  run_01JQ... --json | jq '.tasks[] | {id, status, attempts}'
-agent-squad inspect run_01JQ... --events --decisions --json > trace.json
-```
+## Current evidence
 
----
+- The historical local experiment retained **62 completed workflow trials and
+  2 cancellations**, plus **45 direct requests** across eight checkpoints and a
+  CPU baseline. Its original timing sample had a residual-server limitation.
+- A later, smaller timing sample records verified process ownership. It tests
+  the measurement mechanism; it does not replace a held-out repository study.
+- The published generated verifier corpus contains **600 adversarial cases and
+  160 known-correct cases**. Its independence assumptions and generalization
+  still require review; it is not a benchmark of real coding tasks.
+- The assessment distinguishes implementation from qualification. Independent
+  review, real-repository gains and sustained external use remain unqualified.
 
-## Architecture at a glance
+See [the evidence guide](docs/evaluation.md), [measured results](docs/benchmark-results.md)
+and [strict scoring criteria](docs/scoring-criteria.md). Historical measurements
+are retained with their original conditions rather than rewritten as current
+release guarantees.
 
-```
-                     ┌──────────────────────────────────────┐
-   request ─────────▶│  RepositoryInspector → Planner       │
-                     │  (read-only)      (rule-based | LLM)  │
-                     └───────────────┬──────────────────────┘
-                                     │ validated TaskDAG
-                     ┌───────────────▼──────────────────────┐
-                     │  StrategySelector                    │
-                     │  (deterministic, explainable)        │
-                     └───────────────┬──────────────────────┘
-                                     │ worker count
-                     ┌───────────────▼──────────────────────┐
-                     │  Scheduler (asyncio, bounded)        │
-                     │  ready queue · retries · deadlines   │
-                     └───┬───────────────┬──────────────────┘
-                         │               │
-            ┌────────────▼───┐      ┌────▼─────────────┐
-            │  WorkerRunner  │      │  WorkerRunner    │   each in its own
-            │  + AgentLoop   │      │  + AgentLoop     │   git worktree
-            │  + ToolRegistry│      │  + ToolRegistry  │
-            │  + PolicyEngine│      │  + PolicyEngine  │
-            └────────────┬───┘      └────┬─────────────┘
-                         │ patch artifact │ patch artifact
-                         └───────┬────────┘
-                     ┌───────────▼──────────────┐
-                     │  IntegrationEngine        │
-                     │  apply · detect conflicts │
-                     │  re-run the test suite    │
-                     └───────────┬──────────────┘
-                                 │
-                     ┌───────────▼──────────────┐
-                     │  VerificationGate         │
-                     │  re-executes criteria      │
-                     └───────────┬──────────────┘
-                                 │
-                     ┌───────────▼──────────────┐
-                     │  Event log (SQLite/WAL)   │──▶ replay · benchmark
-                     │  + content-addressed      │    · dashboard · audit
-                     │    artifact store          │
-                     └──────────────────────────┘
-```
+## Documentation map
 
-Full detail: [`docs/architecture.md`](docs/architecture.md).
-
----
-
-## Design commitments
-
-These are enforced in code, not in prompts:
-
-1. **Deterministic control lives outside the model.** Models propose plans,
-   edits and schedules. Deterministic code decides graph validity,
-   authorisation, budgets, transitions, concurrency, cancellation and
-   acceptance.
-2. **Every model output is untrusted.** Structured outputs are validated
-   against schemas and business rules. No generated text can widen a
-   permission, change a policy, or bypass an approval.
-3. **Failures are first-class.** There is a typed failure taxonomy
-   (`agent_squad/errors.py`); expected failures are never hidden behind a
-   generic `except`.
-4. **Verification is independent.** The orchestrator re-executes acceptance
-   criteria itself. A reviewer's opinion is advisory and is recorded as
-   advisory.
-5. **Isolation is layered.** Git worktrees isolate *code*, the capability
-   layer isolates *authority*, the sandbox isolates *resources*. None of the
-   three alone is a security boundary; the threat model says so explicitly.
-6. **Human approval is real.** Commits, pushes, deletions, protected paths
-   and network access require an explicit recorded decision.
-
----
-
-## Repository layout
-
-```
-src/agent_squad/
-├── orchestrator.py      # composition root: one run, start to finish
-├── config.py            # typed, validated, serialisable configuration
-├── errors.py            # the failure taxonomy
-├── ids.py               # sortable identifiers
-├── models/              # task, message, artifact, evidence, run schemas
-├── dag/                 # task graph: validation, ordering, scopes
-├── planning/            # repository inspection, planners, task briefs
-├── scheduler/           # the asyncio DAG scheduler
-├── strategy/            # coordination cost model and strategy selector
-├── agents/              # agent runtime, worker runner, message bus, approvals
-├── tools/               # tool protocol and implementations
-├── security/            # capabilities, policy engine, injection defences
-├── sandbox/             # resource-limited process execution
-├── workspace/           # git worktree isolation
-├── integration/         # patch combination and conflict detection
-├── verification/        # the independent verification gate
-├── store/               # SQLite event log and projections
-├── providers/           # model adapters, budgets, pricing
-├── artifacts/           # content-addressed artifact store
-├── observe/             # structured logs, tracing, metrics
-├── replay/              # recording and replay
-├── benchmark/           # the orchestration efficiency laboratory
-├── api/                 # FastAPI service
-└── cli/                 # the command line interface
-
-tests/                   # unit · integration · concurrency · recovery · security · evaluation
-docs/                    # architecture, ADRs, threat model, reliability, benchmarks
-dashboard/               # optional React + React Flow web dashboard
-```
-
----
-
-## Documentation
-
-| Document | Contents |
+| If you want to… | Read |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Components, lifecycle, state machine, persistence, trust boundaries |
-| [`docs/deep-dive.md`](docs/deep-dive.md) | The invariants, the algorithms and why they are correct, complexity, extension points |
-| [`docs/design-decisions/`](docs/design-decisions/) | Six ADRs with the alternatives that were rejected |
-| [`docs/security-threat-model.md`](docs/security-threat-model.md) | Adversaries, mitigations with code references, known weaknesses |
-| [`docs/reliability.md`](docs/reliability.md) | Failure taxonomy, retry policy, durability, race analysis, known gaps |
-| [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md) | How the experiment is designed and what it can and cannot show |
-| [`docs/benchmark-results.md`](docs/benchmark-results.md) | Measured results, including negative results |
-| [`docs/local-benchmark-results.md`](docs/local-benchmark-results.md) | Eight real local checkpoints driving the agent workflow |
-| [`docs/local-inference-results.md`](docs/local-inference-results.md) | Fixed-score inference probes on RTX 3050 and a CPU baseline |
-| [`docs/local-benchmark-methodology.md`](docs/local-benchmark-methodology.md) | Local hardware, workload, scoring and measurement limits |
-| [`docs/roadmap.md`](docs/roadmap.md) | Prioritized roadmap toward 9.5+, with measurable release gates |
-| [`docs/scoring-criteria.md`](docs/scoring-criteria.md) | Binding score criteria, evidence thresholds, hard caps and qualification rules |
-| [`docs/assessment-record.yaml`](docs/assessment-record.yaml) | The formal assessment: every criterion's decision, its evidence hash and its reviewer. **Read this before quoting any score.** |
-| [`docs/assessment-decisions.json`](docs/assessment-decisions.json) | The inputs to the assessor, including what each criterion is blocked on |
-| [`docs/improvement-audit.md`](docs/improvement-audit.md) | The gap analysis: what is missing, why it matters, what to do first |
-| [`docs/limitations.md`](docs/limitations.md) | What this system does not do |
-| [`docs/implementation-walkthrough.md`](docs/implementation-walkthrough.md) | A guided tour of the code, end to end |
-| [`docs/failure-analysis.md`](docs/failure-analysis.md) | Failures encountered while building this, and what they taught |
-| [`PROJECT_STATUS.md`](PROJECT_STATUS.md) | What is done, what is pending, what is blocked |
+| Understand the project in depth | [Project guide](docs/project-guide.md) |
+| Run a safe, disposable example | [Getting started](docs/getting-started.md) |
+| Understand contracts, scopes and outcomes | [Concepts](docs/concepts.md) |
+| Configure providers, limits and containment | [Configuration](docs/configuration.md) |
+| Trace the runtime and source | [Architecture](docs/architecture.md), [deep dive](docs/deep-dive.md), [walkthrough](docs/implementation-walkthrough.md) |
+| Operate, inspect, cancel or recover a run | [Operations](docs/operations.md), [CLI and API reference](docs/reference.md) |
+| Understand trust and failure boundaries | [Security](docs/security-threat-model.md), [reliability](docs/reliability.md), [limitations](docs/limitations.md) |
+| Reproduce or interpret measurements | [Evaluation](docs/evaluation.md), [reproduction](docs/reproduction.md) |
+| Contribute or assess the project | [Contributing](docs/contributing.md), [roadmap](docs/roadmap.md), [scoring](docs/scoring-criteria.md) |
+| Use the example requests or UI | [Examples](examples/README.md), [dashboard](dashboard/README.md) |
 
----
+## Scope
 
-## Development
+The supported design is a local, single-user, single-host application backed by
+SQLite and Git. Development isolation is best effort. Hardened isolation is an
+explicit execution profile that must demonstrate the required boundaries or
+refuse to run. The API is a trusted local control surface, not a public,
+authenticated multi-tenant service. Read the security model before using an
+untrusted repository or granting network, deletion, commit or push authority.
 
-```bash
-pip install -e ".[dev]"
-pytest                       # the full suite
-pytest -m "not slow"         # skip the lifecycle matrix and heavy scenarios
-pytest tests/lifecycle -q    # the R2 lifecycle matrix on its own
-pytest tests/security -v     # the security regression suite
-ruff check src tests
-```
-
-### What the score is, and is not
-
-The project's own policy (`docs/scoring-criteria.md`) requires a **named
-independent reviewer** for any criterion to count as `PASS`, and states
-that an author reviewing their own work does not qualify. No such review
-has happened, so `docs/assessment-record.yaml` reports
-`formal_score: 0.0` with every criterion `INCONCLUSIVE` or `MISSING`.
-That is the honest number under the policy, not a claim that the
-implementation is worth zero.
-
-The record also publishes an `engineering_readiness` section, clearly
-labelled as *not* the formal score, so a reviewer can see which criteria
-are one independent reproduction away from a decision and which are
-genuinely absent (`S3`, `U1`, `U2`, `V4` — an external audit, 30–90 days
-of external usage, and a second independent team).
-
-The suite is hermetic: no network access, no paid model API, no reliance on
-wall-clock timing for correctness. Tests that measure timing assert on
-*ordering of recorded events*, not on elapsed milliseconds.
-
----
-
-## License
-
-Apache-2.0.
+The project does not yet establish that more agents improve real-repository
+completion, latency or cost. Its purpose is to make that question testable and
+to make unsuccessful or inconclusive results visible.

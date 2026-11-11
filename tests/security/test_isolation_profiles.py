@@ -181,7 +181,40 @@ def test_the_effective_config_satisfies_the_hardened_profile(
     import asyncio
 
     from agent_squad.orchestrator import Orchestrator
+    from agent_squad.sandbox.containment import find_backend
     from agent_squad.security.profiles import IsolationGuard, get_profile
+
+    if find_backend() != "bubblewrap":
+        # This host cannot provide the hardened profile.  The runtime must
+        # say so rather than pretend, and that refusal is the evidence for
+        # *this* environment -- it is not a failure of the code.  The
+        # policy allows exactly this: a capability-dependent skip with a
+        # recorded refusal.  The supported-host assertion below still runs
+        # wherever bubblewrap is present.
+        config = RunConfig(
+            run_id="run_effective",
+            repo_path=str(repo),
+            data_dir=str(tmp_path / "data"),
+            provider={"name": "mock", "model": "mock-deterministic-v1"},
+            isolation_profile="hardened",
+        )
+        orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
+        try:
+            report = IsolationGuard(
+                get_profile("hardened"),
+                orchestrator.config.sandbox,
+                workspace=orchestrator.paths.worktrees,
+                private_home=orchestrator.private_home,
+            ).inspect()
+            assert not report.satisfied
+            assert "execution_containment" in report.missing(), report.to_dict()
+        finally:
+            asyncio.run(orchestrator.aclose())
+        pytest.skip(
+            "this host has no bubblewrap backend "
+            f"(find_backend()={find_backend()!r}); the hardened profile is "
+            "correctly refused, and that refusal was asserted"
+        )
 
     config = RunConfig(
         run_id="run_effective",
