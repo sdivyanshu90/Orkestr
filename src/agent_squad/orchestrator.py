@@ -245,7 +245,10 @@ class Orchestrator:
         # The run's durable resource registry.  While a sandboxed command
         # is alive its process group is recorded here, so that a run
         # killed with SIGKILL leaves a record that the next run reclaims.
-        self.registry = ResourceRegistry(self.paths.root / "resources.json")
+        # Load the previous owner's registry before reclaiming it.  A fresh,
+        # empty registry here would make reconciliation a no-op -- which is
+        # exactly the bug this test was written to catch.
+        self.registry = ResourceRegistry.load(self.paths.root / "resources.json")
         # Every model attempt is recorded here, including planner, worker,
         # reviewer, retry and fallback attempts, and including failures and
         # cancellations.  The ledger is the run's accounting record: a run
