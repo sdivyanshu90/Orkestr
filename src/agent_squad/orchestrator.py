@@ -58,7 +58,12 @@ from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
 from .providers.ledger import RequestLedger
 from .providers.registry import ProviderRouter, build_providers
-from .runtime.deadline import DeadlineExceeded, RunDeadline, bind_run_scope
+from .runtime.deadline import (
+    DeadlineExceeded,
+    RunDeadline,
+    bind_run_scope,
+    unbind_run_scope,
+)
 from .runtime.registry import ResourceRegistry, reconcile
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
@@ -406,6 +411,10 @@ class Orchestrator:
                 )
         finally:
             restore_signals()
+            # A bound run scope that outlives its run would leak the run's
+            # cancellation token into the next one -- the next run would
+            # start already-cancelled.  The scope is released with the run.
+            unbind_run_scope()
 
     def _install_signal_handlers(
         self, cancellation: asyncio.Event
