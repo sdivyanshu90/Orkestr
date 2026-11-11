@@ -438,6 +438,7 @@ class Orchestrator:
         if threading.current_thread() is not threading.main_thread():
             return lambda: None
         previous: dict[int, Any] = {}
+        loop = asyncio.get_running_loop()
 
         def handler(signum: int, frame: Any) -> None:
             if cancellation.is_set():
@@ -445,7 +446,16 @@ class Orchestrator:
                     signal.signal(signum, signal.SIG_DFL)
                 os.kill(os.getpid(), signum)
                 return
-            cancellation.set()
+            # A signal handler runs while the loop is inside ``select``.
+            # Setting the event directly resolves its waiter, but it does
+            # not interrupt ``select`` -- the loop only notices when the
+            # sleep it is blocked on expires, which can be the task's whole
+            # timeout.  ``call_soon_threadsafe`` writes the loop's
+            # self-pipe, which is what actually wakes it.
+            try:
+                loop.call_soon_threadsafe(cancellation.set)
+            except RuntimeError:  # pragma: no cover - loop already closed
+                cancellation.set()
             self.logger.warning(
                 "run interrupted by signal; cancelling gracefully",
                 signal=signal.Signals(signum).name,
@@ -1271,6 +1281,9 @@ class Orchestrator:
         registry = getattr(self, "registry", None)
         if registry is None:
             return
+        # Reconcile the shared instance: the sandbox registers commands
+        # while they are alive, and the teardown is the component that
+        # reclaims anything the cancellation path could not.
         report = registry.cleanup(grace_s=5.0)
         if report.survivors:
             self.logger.error(

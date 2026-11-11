@@ -37,12 +37,6 @@ from ..config import SandboxConfig
 from ..errors import ToolError
 from ..runtime.registry import ResourceKind, ResourceRegistry
 
-#: One registry instance per path per process.  The sandbox is constructed
-#: ad hoc (the tool path builds a fresh one for every command), so a
-#: process-wide cache is what keeps concurrent commands from clobbering
-#: each other's registrations in the durable file.
-_REGISTRIES: dict[str, ResourceRegistry] = {}
-
 
 @dataclass
 class CommandResult:
@@ -428,11 +422,9 @@ class Sandbox:
         path = (self.config.registry_path or "").strip()
         if not path:
             return None
-        registry = _REGISTRIES.get(path)
-        if registry is None:
-            registry = ResourceRegistry.load(path)
-            _REGISTRIES[path] = registry
-        return registry
+        # ``load`` is cached per path, so this is the same object the
+        # orchestrator's teardown will reconcile.
+        return ResourceRegistry.load(path)
 
     async def _probe_unshare(self, cwd: Path, env: dict[str, str]) -> bool | None:
         """Check whether ``unshare --net`` works on this host."""

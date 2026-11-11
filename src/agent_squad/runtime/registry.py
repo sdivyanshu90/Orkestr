@@ -107,6 +107,9 @@ class CleanupReport:
         }
 
 
+_INSTANCES: dict[str, ResourceRegistry] = {}
+
+
 class ResourceRegistry:
     """The durable record of what a run owns.
 
@@ -196,7 +199,19 @@ class ResourceRegistry:
 
     @classmethod
     def load(cls, path: str | Path) -> ResourceRegistry:
+        """The one registry for a path, loaded from disk on first use.
+
+        A second object for the same path would hold a second, empty view:
+        the sandbox would register a command the orchestrator's teardown
+        could not see, and the command would survive the run.  The cache is
+        per process; the file remains the cross-process record.
+        """
+        key = str(Path(path).resolve())
+        cached = _INSTANCES.get(key)
+        if cached is not None:
+            return cached
         registry = cls(path)
+        _INSTANCES[key] = registry
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
