@@ -28,7 +28,7 @@ from .agents.runner import WorkerRunner
 from .artifacts.store import ArtifactStore
 from .config import RunConfig
 from .dag.graph import TaskGraph
-from .errors import RunOwnershipError, ValidationError
+from .errors import InfrastructureError, RunOwnershipError, ValidationError
 from .integration.engine import IntegrationEngine
 from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
@@ -134,6 +134,59 @@ class RunOutcome:
 class Orchestrator:
     """Runs one orchestration session end to end."""
 
+    @staticmethod
+    def _requested_containment(config: RunConfig) -> str:
+        """Which containment backend the profile requires.
+
+        The hardened profile promises a filesystem boundary, so it requires
+        bubblewrap; the development profile promises nothing beyond
+        resource limits, so it runs uncontained unless the operator asked
+        for containment explicitly.
+        """
+        explicit = (config.sandbox.containment or "none").strip().lower()
+        if explicit not in ("", "none"):
+            return explicit
+        if config.isolation_profile == "hardened":
+            return "bubblewrap"
+        return "none"
+
+    def _git_dir(self, repo_path: str | Path) -> str:
+        """The repository's git metadata directory.
+
+        A git worktree is unusable without it -- the worktree's ``.git``
+        file points into it -- so it is bound into the containment
+        boundary.  It is in the same trust domain as the workspace.
+        """
+        candidate = Path(repo_path) / ".git"
+        return str(candidate) if candidate.exists() else ""
+
+    def _with_sandbox(
+        self,
+        config: RunConfig,
+        *,
+        private_home: str,
+        containment: str,
+    ) -> RunConfig:
+        """Return the effective configuration for this run.
+
+        The sandbox configuration is frozen, so the effective values are
+        produced with an explicit copy and the result is what gets
+        persisted and replayed.
+        """
+        binds = tuple(
+            dict.fromkeys(
+                (*config.sandbox.extra_bind_paths, self._git_dir(config.repo_path))
+            )
+        )
+        sandbox = config.sandbox.model_copy(
+            update={
+                "private_home": private_home,
+                "containment": containment,
+                "extra_bind_paths": tuple(p for p in binds if p),
+            }
+        )
+        return config.model_copy(update={"sandbox": sandbox})
+
     def __init__(
         self,
         config: RunConfig,
@@ -147,6 +200,22 @@ class Orchestrator:
         base = Path(data_dir or config.data_dir or ".agent-squad").resolve()
         self.paths = RunPaths.for_run(base, config.run_id)
         self.paths.ensure()
+
+        # Every run gets a private home.  It is created before anything
+        # executes so that no command can inherit the invoking user's
+        # home, and it is removed when the run tears down.
+        self.private_home = self.paths.root / "sandbox" / "home"
+        self.private_home.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.private_home, 0o700)
+        for sub in (".config", ".cache", ".local", "tmp"):
+            (self.private_home / sub).mkdir(parents=True, exist_ok=True)
+        self.config = self._with_sandbox(
+            config,
+            private_home=str(self.private_home),
+            containment=self._requested_containment(config),
+        )
+        config = self.config
+
         # Persist the configuration so that the run can be replayed later
         # without the operator having to reconstruct it.
         (self.paths.root / "run-config.json").write_text(
@@ -333,12 +402,44 @@ class Orchestrator:
         # The isolation profile is checked *before* anything runs: a profile
         # that promises a boundary must either have it or refuse to start.
         profile = get_profile(self.config.isolation_profile)
-        isolation = IsolationGuard(profile, self.config.sandbox).check()
+        guard = IsolationGuard(
+            profile,
+            self.config.sandbox,
+            workspace=self.paths.worktrees,
+            private_home=self.private_home,
+        )
+        isolation = guard.check()
+        self.isolation = isolation
         self.logger.info(
             "isolation profile verified",
             profile=isolation.profile,
             boundaries=len(isolation.boundaries),
         )
+        # The hardened profile's boundaries are *demonstrated*, not claimed:
+        # a real command is executed inside the boundary and its
+        # observations decide whether the profile is honoured.
+        probe = await guard.probe()
+        if probe is not None:
+            self.logger.info(
+                "containment probed",
+                backend=probe.backend,
+                ok=probe.ok,
+                checks=",".join(
+                    name for name, passed in probe.checks.items() if not passed
+                )
+                or "all boundaries held",
+            )
+            if not probe.ok:
+                raise InfrastructureError(
+                    "the isolation profile promised boundaries that the "
+                    "containment probe did not observe: "
+                    + ", ".join(
+                        name for name, passed in probe.checks.items() if not passed
+                    )
+                    + f". Refusing to run. ({probe.detail})",
+                    profile=self.config.isolation_profile,
+                    detail=probe.detail,
+                )
 
         # One absolute deadline for the whole run, reserved time included.
         deadline = RunDeadline(
@@ -974,6 +1075,21 @@ class Orchestrator:
         for provider in self._providers:
             await provider.aclose()
         self.db.close()
+        self._remove_private_home()
+
+    def _remove_private_home(self) -> None:
+        """Delete the run's private home.
+
+        The private home is where a sandboxed command could have written
+        anything it liked, so it is removed with the run rather than left
+        behind for the next one to inherit.
+        """
+        import shutil
+
+        home = getattr(self, "private_home", None)
+        if home is None:
+            return
+        shutil.rmtree(home, ignore_errors=True)
 
     def close(self) -> None:
         """Close the run's resources synchronously.

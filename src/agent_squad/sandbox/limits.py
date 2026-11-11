@@ -49,6 +49,8 @@ class CommandResult:
     truncated: bool = False
     network_isolated: bool = False
     isolation_note: str = ""
+    containment: str = "none"
+    """The containment backend the command actually ran inside."""
     env_used: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -66,6 +68,7 @@ class CommandResult:
             "truncated": self.truncated,
             "network_isolated": self.network_isolated,
             "isolation_note": self.isolation_note,
+            "containment": self.containment,
         }
 
 
@@ -99,16 +102,43 @@ def build_environment(
     The hardened settings are applied unconditionally: a repository cannot
     opt out of them, because the orchestrator sets them for every command it
     runs.  They are *enforced settings*, not prompt instructions.
+
+    ``HOME`` is the important one.  It is never inherited from the
+    invoking user: a command that inherits ``HOME`` can read the user's
+    dotfiles, credentials and shell history, which is exactly the ambient
+    authority the isolation profiles promise to withhold.  When the run has
+    a private home (every run the orchestrator drives has one), that
+    directory becomes ``HOME``, and the XDG cache, config, data and state
+    directories are placed inside it as well, so that a tool's caches are
+    isolated too rather than merely redirected.
     """
     env: dict[str, str] = {}
     for key in sandbox.env_allowlist:
+        if key == "HOME":
+            # Never inherited.  See the docstring.
+            continue
         value = os.environ.get(key)
         if value is not None:
             env[key] = value
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
-    env["HOME"] = env.get("HOME", "/tmp")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
+
+    private_home = sandbox.private_home.strip()
+    if private_home:
+        home = Path(private_home)
+        env["HOME"] = private_home
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
+        env["XDG_CACHE_HOME"] = str(home / ".cache")
+        env["XDG_DATA_HOME"] = str(home / ".local" / "share")
+        env["XDG_STATE_HOME"] = str(home / ".local" / "state")
+        env["TMPDIR"] = str(home / "tmp")
+    else:
+        # No private home has been provisioned.  This is the development
+        # profile's behaviour; the hardened profile refuses to run in this
+        # state, because it promises a private home.
+        env["HOME"] = os.environ.get("HOME", "/tmp")
+
     # Break accidental proxy usage; the network namespace (when available)
     # is the real control.
     env["no_proxy"] = "*"
@@ -121,6 +151,10 @@ def build_environment(
     env["GIT_ASKPASS"] = ""
     if extra:
         env.update({k: str(v) for k, v in extra.items()})
+    # ``extra`` is caller-supplied and may not re-introduce the inherited
+    # home; the private home wins.
+    if private_home:
+        env["HOME"] = private_home
     return env
 
 
@@ -130,6 +164,30 @@ class Sandbox:
     def __init__(self, config: SandboxConfig | None = None) -> None:
         self.config = config or SandboxConfig()
         self._unshare = shutil.which("unshare")
+        self._containment = self._resolve_containment()
+
+    def _resolve_containment(self) -> str:
+        """The containment backend this sandbox will actually use.
+
+        ``auto`` resolves to bubblewrap when it is installed, because
+        bubblewrap provides a filesystem boundary that ``unshare`` cannot.
+        An explicitly configured backend that is not installed resolves to
+        ``none`` -- and the isolation guard refuses the run rather than
+        letting it degrade silently.
+        """
+        requested = (self.config.containment or "none").strip().lower()
+        if requested in ("", "none"):
+            return "none"
+        if requested == "auto":
+            from .containment import find_backend
+
+            return find_backend() or "none"
+        return requested
+
+    @property
+    def containment(self) -> str:
+        """The backend in use: ``none``, ``bubblewrap`` or ``unshare``."""
+        return self._containment
 
     def check_executable(self, executable: str, *, workdir: Path | None = None) -> None:
         """Reject an executable that is not permitted.
@@ -194,7 +252,12 @@ class Sandbox:
         isolation_note = ""
 
         effective_argv = argv
-        if not self.config.allow_network and self._unshare:
+        if self._containment != "none":
+            effective_argv, isolation_note = self._containment_argv(
+                argv, workdir, child_env
+            )
+            network_isolated = self._containment in ("bubblewrap", "unshare")
+        elif not self.config.allow_network and self._unshare:
             probe = await self._probe_unshare(workdir, child_env)
             if probe is True:
                 network_isolated = True
@@ -266,7 +329,36 @@ class Sandbox:
             truncated=stdout_truncated or stderr_truncated,
             network_isolated=network_isolated,
             isolation_note=isolation_note,
+            containment=self._containment,
             env_used={"PATH": child_env.get("PATH", "")},
+        )
+
+    def _containment_argv(
+        self, argv: tuple[str, ...], workdir: Path, env: dict[str, str]
+    ) -> tuple[tuple[str, ...], str]:
+        """Build the argument vector for the containment backend."""
+        from .containment import build_argv
+
+        private_home = self.config.private_home.strip()
+        if not private_home:
+            # Without a private home the boundary would leak the invoking
+            # user's home into the sandbox, so the backend is not used.
+            return argv, (
+                "containment was requested but the run has no private home, so "
+                "the command ran without a filesystem boundary"
+            )
+        extra = tuple(Path(p) for p in self.config.extra_bind_paths)
+        built = build_argv(
+            self._containment,
+            argv,
+            workspace=workdir,
+            private_home=Path(private_home),
+            env=env,
+            extra_read_write=extra,
+        )
+        return tuple(built), (
+            f"executed inside the {self._containment} containment backend "
+            "(read-only system, private home, isolated network and PID namespace)"
         )
 
     async def _probe_unshare(self, cwd: Path, env: dict[str, str]) -> bool | None:

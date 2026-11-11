@@ -29,6 +29,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from ..config import SandboxConfig
@@ -66,7 +67,7 @@ class Profile:
     requires_network_isolation: bool = False
     requires_isolated_home: bool = False
     requires_no_ambient_git: bool = False
-    requires_readonly_system: bool = False
+    requires_containment: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class Profile:
             "requires_network_isolation": self.requires_network_isolation,
             "requires_isolated_home": self.requires_isolated_home,
             "requires_no_ambient_git": self.requires_no_ambient_git,
+            "requires_containment": self.requires_containment,
         }
 
 
@@ -89,6 +91,7 @@ HARDENED_PROFILE = Profile(
     requires_network_isolation=True,
     requires_isolated_home=True,
     requires_no_ambient_git=True,
+    requires_containment=True,
 )
 
 PROFILES: dict[IsolationProfile, Profile] = {
@@ -133,9 +136,19 @@ class IsolationReport:
 class IsolationGuard:
     """Checks that a profile's promises can be kept, before the run starts."""
 
-    def __init__(self, profile: Profile, sandbox: SandboxConfig | None = None) -> None:
+    def __init__(
+        self,
+        profile: Profile,
+        sandbox: SandboxConfig | None = None,
+        *,
+        workspace: Path | None = None,
+        private_home: Path | None = None,
+    ) -> None:
         self.profile = profile
         self.sandbox = sandbox or SandboxConfig()
+        self.workspace = workspace
+        self.private_home = private_home
+        self._probe_report: Any = None
 
     # --------------------------------------------------------- the checks
 
@@ -162,15 +175,61 @@ class IsolationGuard:
         return True, "unshare --net is available"
 
     def _isolated_home_available(self) -> tuple[bool, str]:
-        # The sandbox rewrites HOME for every command, so an isolated home is
-        # available whenever the sandbox can run at all.
-        return True, "the sandbox rewrites HOME for every command"
+        """The private home must exist, and must not be the user's home.
+
+        The previous implementation of this check returned ``True``
+        unconditionally on the grounds that "the sandbox rewrites HOME for
+        every command".  That was false: the environment builder kept the
+        invoking user's ``HOME``, so the check asserted a boundary the
+        runtime did not have.  It now inspects the actual configuration
+        and the actual directory.
+        """
+        configured = (self.sandbox.private_home or "").strip()
+        if not configured:
+            return False, (
+                "the run has no private home directory, so every command would "
+                "inherit the invoking user's home"
+            )
+        home = Path(configured)
+        if not home.is_dir():
+            return False, f"the private home directory does not exist: {home}"
+        user_home = os.environ.get("HOME", "")
+        if user_home and home.resolve() == Path(user_home).resolve():
+            return False, (
+                "the private home is the invoking user's home, which provides "
+                "no isolation at all"
+            )
+        return True, f"the private home is {home}"
 
     def _no_ambient_git_available(self) -> tuple[bool, str]:
         git = shutil.which("git")
         if not git:
             return False, "git is not installed"
         return True, "the sandbox disables ambient git configuration"
+
+    def _containment_available(self) -> tuple[bool, str]:
+        """The containment backend must be present *and* work.
+
+        Presence is not capability.  The backend is exercised with a real
+        command and the observations decide, so a host on which bubblewrap
+        is installed but blocked by the kernel is refused rather than
+        trusted.
+        """
+        from ..sandbox.containment import find_backend
+
+        backend = find_backend()
+        if backend is None:
+            return False, (
+                "neither bubblewrap nor unshare is installed, so no execution "
+                "containment can be established"
+            )
+        if backend != "bubblewrap":
+            return False, (
+                f"the only available backend is {backend!r}, which isolates the "
+                "network and the PID namespace but leaves the filesystem "
+                "intact; the hardened profile requires a filesystem boundary"
+            )
+        return True, "bubblewrap is installed"
 
     # ------------------------------------------------------------- the check
 
@@ -181,6 +240,7 @@ class IsolationGuard:
             ("network_isolation", self.profile.requires_network_isolation, self._network_isolation_available),
             ("isolated_home", self.profile.requires_isolated_home, self._isolated_home_available),
             ("no_ambient_git", self.profile.requires_no_ambient_git, self._no_ambient_git_available),
+            ("execution_containment", self.profile.requires_containment, self._containment_available),
         )
         for name, required, check in checks:
             if not required:
@@ -204,6 +264,45 @@ class IsolationGuard:
             )
             if not available:
                 report.satisfied = False
+        return report
+
+    async def probe(self) -> Any:
+        """Execute a real command inside the boundary and report what it saw.
+
+        This is the difference between *claiming* a boundary and
+        *demonstrating* one.  The probe runs the same argument builder the
+        worker's commands use, so a passing probe is evidence about the
+        thing workers actually run.
+        """
+        from ..sandbox.containment import probe as run_probe
+
+        if self.workspace is None or self.private_home is None:
+            self._probe_report = None
+            return None
+        backend = self.sandbox.containment or "none"
+        if backend == "auto":
+            from ..sandbox.containment import find_backend
+
+            backend = find_backend() or "none"
+        if backend == "none":
+            self._probe_report = None
+            return None
+        canary = self.private_home.parent / "host-canary.txt"
+        try:
+            canary.write_text("agent-squad-host-canary", encoding="utf-8")
+        except OSError:
+            canary = self.private_home
+        from ..sandbox.limits import build_environment
+
+        report = await run_probe(
+            backend,
+            workspace=self.workspace,
+            private_home=self.private_home,
+            canary_path=canary,
+            env=build_environment(self.sandbox),
+            extra_read_write=tuple(Path(p) for p in self.sandbox.extra_bind_paths),
+        )
+        self._probe_report = report
         return report
 
     def check(self) -> IsolationReport:

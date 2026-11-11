@@ -90,6 +90,37 @@ class SandboxConfig(_Base):
     )
     env_allowlist: tuple[str, ...] = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "VIRTUAL_ENV")
     strip_env: bool = True
+    containment: str = Field(
+        default="none",
+        description=(
+            "The execution containment backend: 'none' (resource limits "
+            "only), 'bubblewrap' or 'unshare'.  'bubblewrap' assembles a "
+            "filesystem in which the system is read-only and only the task's "
+            "worktree and a private home are writable; it also isolates the "
+            "network and the PID namespace.  'unshare' isolates the network "
+            "and the PID namespace but leaves the filesystem intact, and is "
+            "therefore a strictly weaker profile."
+        ),
+    )
+    private_home: str = Field(
+        default="",
+        description=(
+            "The run's private home directory.  It is created by the "
+            "orchestrator and becomes HOME for every sandboxed command, so "
+            "that no command inherits the invoking user's home, dotfiles or "
+            "credentials.  Empty means the sandbox has no private home, "
+            "which the hardened isolation profile refuses."
+        ),
+    )
+    extra_bind_paths: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Extra paths bound read-write inside the containment boundary.  "
+            "The repository's git metadata directory is one, because a git "
+            "worktree is unusable without it.  Each path is in the same "
+            "trust domain as the workspace."
+        ),
+    )
 
 
 class WorkspaceConfig(_Base):
