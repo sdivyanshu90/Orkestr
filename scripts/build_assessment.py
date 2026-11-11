@@ -84,8 +84,8 @@ MANDATORY: tuple[str, ...] = tuple(
 )
 STRETCH: tuple[str, ...] = ("V4", "U2")
 
-#: §1's caps.  Each entry is (condition, cap).  The lowest applicable cap
-#: wins, and the cap is only *applicable* when the condition holds.
+#: The caps from section 1 of the policy.  Each entry is
+#: (name, criteria, cap).  The lowest applicable cap wins.
 CAPS: tuple[tuple[str, str, float], ...] = (
     (
         "known_false_acceptance_or_authority_bypass",
@@ -239,19 +239,18 @@ def validate(
                 Problem(cid, f"decision {decision!r} is not one of {DECISIONS}")
             )
         reviewer = entry.get("reviewer")
-        if decision == "PASS":
-            # §2: "A PASS must refer to one immutable release candidate
-            # commit, its declared supported scope, the evidence bundle and
-            # a named independent reviewer."  An author reviewing their own
-            # work does not qualify.
-            if not reviewer:
-                problems.append(
-                    Problem(
-                        cid,
-                        "is marked PASS without a named independent reviewer; "
-                        "§2 does not allow the author to review their own work",
-                    )
+        # Section 2: a PASS must refer to one immutable release candidate
+        # commit, its declared supported scope, the evidence bundle and a
+        # named independent reviewer.  An author reviewing their own work
+        # does not qualify.
+        if decision == "PASS" and not reviewer:
+            problems.append(
+                Problem(
+                    cid,
+                    "is marked PASS without a named independent reviewer; "
+                    "section 2 does not allow the author to review their own work",
                 )
+            )
         resolved, evidence_problems = resolve_evidence(
             entry, criterion=cid, commit=commit
         )
@@ -287,8 +286,8 @@ def compute(
         else:
             not_passed.append(cid)
 
-    # §1: "Any R1–R4 lifecycle criterion or S1–S3 authority/containment
-    # criterion fails or lacks qualifying evidence" -> 8.5.
+    # Section 1: any R1-R4 lifecycle or S1-S3 authority/containment
+    # criterion that fails or lacks qualifying evidence caps the score at 8.5.
     lifecycle = {"R1", "R2", "R3", "R4", "S1", "S2", "S3"}
     value = {"V1", "V2", "V3", "M1", "M2"}
     other_mandatory = set(MANDATORY) - lifecycle - value

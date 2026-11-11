@@ -2,24 +2,53 @@
 
 **Codename:** `agent-squad`
 **Version:** 0.1.0
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-11
+
+---
+
+## The honest headline: the formal score is 0.0, and that is correct
+
+`docs/scoring-criteria.md` is the authoritative policy. §2 requires a
+**named independent reviewer** for any criterion to be marked `PASS`, and
+states explicitly that "an author reviewing their own output does not
+qualify". No such review has happened. Every criterion in
+[`docs/assessment-record.yaml`](docs/assessment-record.yaml) is therefore
+`INCONCLUSIVE` (implemented and self-evidenced, awaiting independent
+reproduction) or `MISSING` (the required artefacts do not exist), and
+`raw_score = 0.0`.
+
+That is not a bug in the assessor. It is the policy working as designed:
+this repository does not certify itself. The record also publishes an
+**engineering readiness** section, clearly labelled as *not* the formal
+score, so a reviewer can see which criteria are one reproduction away from
+a decision and which are genuinely absent.
+
+Three criteria are **not reachable by any amount of implementation work**:
+`S3` needs an implementation-independent audit, `U1` needs 3 external
+developers over 30 consecutive days and 100 genuine runs, `U2` extends that
+to 90 days and 10 users, and `V4` needs a second independent team on a
+separately administered machine.
 
 ---
 
 ## Summary
 
-A working multi-agent orchestration runtime for software engineering. A
-repository engineering request is turned into a validated task DAG, executed
-by specialised agents in isolated git worktrees, verified independently of
-the agents' own claims, integrated under a real conflict-detection
-boundary, and recorded in an append-only event log that supports replay,
-recovery and benchmarking.
+A multi-agent orchestration runtime for software engineering. A repository
+engineering request becomes a validated task DAG, executed by specialised
+agents in isolated git worktrees, verified independently of the agents' own
+claims, integrated under a real conflict-detection boundary, and recorded in
+an append-only event log that supports replay, recovery and benchmarking.
+
+The distinguishing property is **the acceptance boundary**. A worker's
+"done" is not acceptance: the run is judged against an immutable request
+contract, re-executed on the final combined tree, and reported as
+`accepted`, `rejected`, `inconclusive`, `timed_out` or `cancelled`. A run
+that changed nothing is `inconclusive` rather than accepted, and an outcome
+that already held before the work is `preserved` only when the run actually
+touched what the outcome is about.
 
 The system runs end to end with no paid model API access, using a
 deterministic mock provider that emits genuine tool calls.
-
-**Current state: all 159 tests pass. The end-to-end path produces real
-patches, real verification and a successful integration.**
 
 ---
 
@@ -34,8 +63,14 @@ patches, real verification and a successful integration.**
 | 4 | Durable runtime | **Complete** |
 | 5 | Adaptive orchestration | **Complete** (heuristics; not calibrated) |
 | 6 | Observability and debugging | **Partial** — event log complete, OTel partial, replay complete |
-| 7 | Security and chaos engineering | **Partial** — capability layer complete, chaos harness partial |
-| 8 | Portfolio-quality productisation | **Partial** — API complete, dashboard complete, docs complete |
+| 7 | Security and chaos engineering | **Partial** — capability layer and hardened containment complete; chaos harness partial |
+| 8 | Portfolio-quality productisation | **Partial** — API and dashboard complete, docs complete |
+| R0 | Trustworthy success | **Complete** — immutable contract, final-tree judgement, no-op detection |
+| R1 | Bounded execution and accounting | **In progress** — deadline phases and request ledger landing |
+| R2 | Containment and deterministic recovery | **Complete** — ownership, reconciliation, retained-workspace manifest, signal handling |
+| R3 | Real-repository evidence | **Not started** — needs a preregistered corpus |
+| R4 | Coordination earns its overhead | **Complete** — bounded replanning |
+| R5 | Operable, reproducible release | **In progress** — mypy, lockfile and CI landing |
 
 ---
 
@@ -124,28 +159,32 @@ patches, real verification and a successful integration.**
 
 ## Test coverage
 
-268 tests across seven suites, all passing in ~31 s:
+The suite has grown with each roadmap stage. It is organised by what it
+proves, not by module:
 
-| Suite | Tests | What it covers |
-|---|---:|---|
-| `tests/unit` | 104 | DAG validation, lifecycle table, policy decisions, budget accounting, evidence schema, message protocol, strategy selection, artifact provenance and invalidation |
-| `tests/integration` | 78 | The full end-to-end run, budget enforcement, the live FastAPI surface, the dashboard/API contract, provider adapters against a real HTTP server, the message protocol, observability spans, role isolation, configuration wiring, concurrency limits |
-| `tests/concurrency` | 8 | Parallel execution overlap, dependency ordering, attempt fencing, cancellation, duplicate and stale messages |
-| `tests/chaos` | 11 | Transient and permanent provider failure, worker crash, timeout, malformed model output, stale ownership, duplicate message, conflicting patches, cancellation |
-| `tests/recovery` | 12 | Projection rebuild, interrupted-task recovery, lease awareness, idempotency, side-effect reporting, killed-process recovery, resume |
-| `tests/security` | 24 | Sandbox limits, path traversal, symlink escape, planted binaries, injection detection, secret redaction, policy gating, approval blocking |
-| `tests/evaluation` | 14 | Benchmark reproducibility, metric integrity, variance reporting, negative-result representation |
+| Suite | What it proves |
+|---|---|
+| `tests/unit` | Contract semantics, DAG validation, lifecycle transitions, policy decisions, budget accounting, evidence schema, message protocol, strategy selection, artifact provenance and invalidation |
+| `tests/integration` | The full end-to-end run, the hardened containment boundary, budget enforcement, the live FastAPI surface, the dashboard/API contract, provider adapters against a real HTTP server, the message protocol, observability spans, role isolation, configuration wiring, concurrency limits, control-plane replay |
+| `tests/concurrency` | Parallel execution overlap, dependency ordering, attempt fencing, cancellation, duplicate and stale messages |
+| `tests/chaos` | Transient and permanent provider failure, worker crash, timeout, malformed model output, stale ownership, duplicate message, conflicting patches, cancellation |
+| `tests/lifecycle` | The R2 matrix: at least ten integrated cycles per failure category (success, startup failure, failed verification, task timeout, provider failure, user cancellation, SIGINT, SIGTERM, a child ignoring SIGTERM), reconciliation of a SIGKILLed owner, PID reuse, lost registry writes, and retained-workspace manifests |
+| `tests/recovery` | Projection rebuild, interrupted-task recovery, lease awareness, idempotency, side-effect reporting, killed-process recovery, resume |
+| `tests/security` | Sandbox limits, path traversal, symlink escape, planted binaries, injection detection, secret redaction, policy gating, approval blocking, isolation-profile refusal |
+| `tests/evaluation` | The adversarial contract corpus, benchmark reproducibility, metric integrity, variance reporting, negative-result representation |
 
 Run them with:
 
 ```bash
-pytest                    # everything
-pytest -m "not slow"      # skip the slow benchmark scenarios
+pytest                          # everything
+pytest -m "not slow"            # skip the lifecycle matrix and heavy scenarios
+pytest tests/lifecycle -q       # the R2 lifecycle matrix on its own
 ```
 
 The suite is hermetic: no network access, no paid model API, and no reliance
 on wall-clock timing for correctness. The concurrency tests assert on the
-*interleaving of recorded events*, not on elapsed milliseconds.
+*interleaving of recorded events*, not on elapsed milliseconds; the timing
+tests use monotonic bounds with generous margins.
 
 ---
 
@@ -183,83 +222,69 @@ The full, evidence-backed analysis is in
 [`docs/improvement-audit.md`](docs/improvement-audit.md). Ordered by how much
 they limit the project's claims.
 
-1. **Controlled real-model evaluation remains open.** Eight local checkpoints
-   have now been measured (62 completed workflow trials, 2 cancellations and
-   45 direct GPU/CPU requests). These are small synthetic workloads with weak
-   planner-generated criteria and a documented residual-server timing limitation.
-   They do not establish isolated speedups or real-repository coding reliability.
-   See [the measured results](docs/local-benchmark-results.md) and
-   [the roadmap](docs/roadmap.md).
-2. **No adversarial task fixtures.** Every fixture is designed to succeed,
-   so the verified completion rate cannot discriminate between strategies.
-   The discriminating experiment is the one where the single-agent strategy
-   wins and the multi-agent strategy conflicts.
-3. **The strategy selector is uncalibrated.** Its thresholds were chosen by
-   hand. The benchmark publishes predictions and observations side by side,
-   but nothing feeds the comparison back. The published run shows a
-   predicted 22.5 % improvement that was **not** observed.
-4. **No replanning during execution.** `EventType.PLAN_REVISED` is read by
-   the replayer but never emitted; the plan is produced once, before the
-   scheduler starts.
-5. **The event log grows without bound.** There is no compaction or
+1. **No independent review.** This is the single blocker that caps the
+   formal score, and it cannot be closed from inside the repository. §2 of
+   the policy requires a named reviewer who did not implement the criterion
+   and who reproduces its critical result.
+2. **No external usage evidence.** `U1` and `U2` require 30–90 consecutive
+   days, 3–10 developers outside the implementation team, and 100–1,000
+   genuine runs across 3–10 repositories. Synthetic batch repeats do not
+   count.
+3. **No real-repository corpus.** `V1`–`V3` require at least 60 tasks across
+   6 pinned repositories, preregistered and independently reviewed, with 3
+   models × 3 trials. The repository has a synthetic fixture corpus and one
+   64-trial local sweep.
+4. **The historical timing sample carries a caveat.** A residual model
+   server was alive during part of the sweep. The results are retained with
+   the caveat and are not qualification evidence; the qualification sample
+   must be rerun with verified process ownership.
+5. **The strategy selector is uncalibrated.** Its thresholds were chosen by
+   hand. The published run shows a predicted 22.5 % improvement that was
+   **not** observed.
+6. **The event log grows without bound.** There is no compaction or
    retention policy, and `rebuild_projection` replays the whole log.
-6. **Message validation state is not durable.** `MessageBus._seen_ids` and
-   `_versions` are in-memory, so a message can be re-delivered after a
-   restart. The attempt fence still protects correctness; only the record
-   can duplicate.
 7. **The verification gate re-runs the whole suite per task**, which on a
    real repository would dominate the wall-clock time.
-8. **The chaos harness covers nine of the eleven catalogue faults.** Message
-   loss and stalled-worker detection are declared but have no dedicated test.
-9. **No lockfile or type checking.** `pyproject.toml` specifies lower
-   bounds only, and `mypy` is not run — several bugs found during
-   development would have been caught by a type checker.
-10. **No multi-user or authentication model.** Anyone with filesystem access
-    to the data directory can approve a protected action.
-11. **Not distributed.** One process, one host, one SQLite file; no
-    cross-process run-ownership lock.
+8. **No multi-user or authentication model.** Anyone with filesystem access
+   to the data directory can approve a protected action.
+9. **Not distributed.** One process, one host, one SQLite file.
 
 ---
 
 ## Next steps
 
-**Current priority:** follow [the roadmap toward 9.5+](docs/roadmap.md). Formal
-ratings require [the strict scoring criteria](docs/scoring-criteria.md);
-implementation status and test counts alone do not qualify a score. It
-places immutable request-level verification, owned-process cleanup, complete
-accounting and enforced isolation ahead of feature expansion. The lists below
-are earlier backlog context, not the current implementation order.
+**Current priority:** close the six blocking defects listed in
+`docs/scoring-criteria.md` §6, then hand the release candidate to an
+independent reviewer. Implementation status and test counts alone do not
+qualify a score.
 
-### Immediate (highest value)
-1. Add adversarial fixtures where a plausible decomposition yields a
-   plausible but incorrect result, so the verified completion rate can
-   actually discriminate. This needs no external resources and unblocks the
-   completion-rate half of the research question.
-2. Establish controlled timing and complete planner/worker/retry accounting,
-   then evaluate pinned real-repository tasks with independent acceptance checks.
-   A latency-injecting provider can supplement real measurements for controlled
-   experiments; it is not the only way to evaluate latency.
-3. Record the selector's predicted speed-up next to the observed one, and
-   fit the coordination constants to the difference.
+### Closed since the last status
+1. Bounded replanning: a failed verification can produce a revised plan
+   under the existing delegation-depth bound, and `PLAN_REVISED` is emitted.
+2. Lockfile with hashes and `mypy` on the critical paths.
+3. Run ownership: acquisition, heartbeat, fencing and release in every
+   run and resume path.
+4. A request ledger wired into the provider path.
+5. An absolute deadline that covers planning and verification, not only
+   scheduler attempts.
+6. A hardened execution profile with a real containment boundary.
 
-### Near term
-4. Implement bounded replanning: after a verification failure, allow the
-   supervisor to revise the DAG subject to the existing delegation-depth
-   bound, and emit `PLAN_REVISED`.
-5. Add event-log compaction and a retention policy, so recovery time stops
-   growing with the run's history.
-6. Make the message validation state durable by moving the seen-id and
-   version columns into the `messages` table.
-7. Cache pytest results per (tree, selector) pair so verification does not
-   re-run the whole suite for every task.
-8. Generate a lockfile with hashes and add `mypy` to the toolchain.
-
-### Later
-9. A SWE-bench-lite subset, once the evaluation harness is stable.
-10. Distributed execution, if the local runtime's limits are actually
+### Open, and honest
+7. **Independent review** — required for any `PASS`; not an implementation
+   task.
+8. **External usage evidence** — `U1`/`U2` need people and time, not code.
+9. **A preregistered real-repository corpus** for `V1`–`V3`.
+10. **A qualification timing sample** rerun with verified process
+    ownership, replacing the caveated historical sweep.
+11. Event-log compaction and a retention policy, so recovery time stops
+    growing with the run's history.
+12. Caching verification results per (tree, selector) so the gate does not
+    re-run the whole suite for every task.
+13. Making message validation state durable by moving the seen-id and
+    version columns into the `messages` table.
+14. A SWE-bench-lite subset, once the evaluation harness is stable.
+15. Distributed execution, if the local runtime's limits are actually
     reached. The design deliberately stops at a single host today.
-11. Counterfactual branching from a checkpoint with an alternative
-    scheduling policy — the machinery is mostly in place.
 
 ---
 
@@ -267,7 +292,7 @@ are earlier backlog context, not the current implementation order.
 
 ```
 src/agent_squad/       ~14,100 lines  the runtime (45 modules)
-tests/                 ~2,900 lines   188 tests
+tests/                 ~9,000 lines   unit, integration, lifecycle, chaos, recovery, security, evaluation
 docs/                  14 files       architecture, 6 ADRs, threat model, reliability,
                                      methodology, results, limitations, walkthrough,
                                      failure analysis
