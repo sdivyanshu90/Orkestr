@@ -40,6 +40,7 @@ from .planning.planner import PlanRequest, PlanResult, build_planner
 from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
 from .providers.registry import ProviderRouter, build_providers
+from .runtime.deadline import RunDeadline
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
 from .store.db import Database
@@ -280,6 +281,14 @@ class Orchestrator:
     ) -> RunOutcome:
         self.logger.info("run started", objective=objective[:120])
 
+        # One absolute deadline for the whole run, reserved time included.
+        deadline = RunDeadline(
+            total_s=self.config.deadline_s,
+            reserve_s=self.config.teardown_reserve_s,
+        )
+        deadline.start()
+        self.deadline = deadline
+
         self.state.create_run(
             self.config.run_id,
             config=self.config.to_dict(),
@@ -414,6 +423,7 @@ class Orchestrator:
             cancellation=cancellation,
             tracer=self.tracer,
             logger=self.logger,
+            deadline=deadline,
         )
         summary = await scheduler.run()
         outcomes = dict(scheduler.outcomes)

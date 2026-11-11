@@ -22,7 +22,7 @@ from ..models.message import INFORMATIONAL_KINDS
 from ..models.run import RunStatus
 from ..orchestrator import Orchestrator
 from ..store.db import Database
-from ..store.events import EventLog
+from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 
 _INFORMATIONAL_KINDS = {k.value for k in INFORMATIONAL_KINDS}
@@ -228,6 +228,36 @@ def create_app(data_dir: str | Path | None = None) -> Any:
                 for dep in spec.depends_on
             ]
             return {"nodes": nodes, "edges": edges}
+        finally:
+            db.close()
+
+    @app.get("/api/runs/{run_id}/contract")
+    async def get_contract(run_id: str) -> dict[str, Any]:
+        """The request contract and the acceptance verdict for a run."""
+        db, _state, log = _open(run_id)
+        try:
+            created = [
+                e
+                for e in log.read(run_id, types=[EventType.RUN_CREATED])
+                if "contract" in e.payload
+            ]
+            contract = created[0].payload["contract"] if created else None
+            verdicts = [
+                e.payload
+                for e in log.read(run_id, types=[EventType.VERIFICATION_CHECK])
+                if e.payload.get("kind") == "contract"
+            ]
+            return {
+                "contract": contract,
+                "verdict": verdicts[-1] if verdicts else None,
+                "outcomes": {
+                    "accepted": "the request is satisfied by the final candidate tree",
+                    "rejected": "a required outcome is not satisfied",
+                    "inconclusive": "the evidence is insufficient",
+                    "timed_out": "the run exceeded its deadline",
+                    "cancelled": "the run was cancelled",
+                },
+            }
         finally:
             db.close()
 

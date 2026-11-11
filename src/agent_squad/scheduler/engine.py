@@ -96,6 +96,8 @@ class Scheduler:
     base_revision: str | None = None
     tracer: Any = None
     logger: Any = None
+    deadline: Any = None
+    """The run's absolute deadline, if it has one."""
     _started_at: Any = None
     _task_heads: dict[str, str] = field(default_factory=dict)
     outcomes: dict[str, TaskOutcome] = field(default_factory=dict)
@@ -151,9 +153,22 @@ class Scheduler:
         return f"{task.role.value}:{task.id}"
 
     def _timeout_for(self, task: TaskSpec) -> float:
-        if task.budget.deadline_s:
-            return task.budget.deadline_s
-        return self.config.scheduler.default_task_timeout_s
+        """The timeout for one attempt, clamped to the run's deadline.
+
+        A per-task timeout that outlives the run's remaining budget would let
+        a single attempt run past the deadline, which is exactly what an
+        absolute deadline exists to prevent.
+        """
+        requested = (
+            task.budget.deadline_s
+            if task.budget.deadline_s
+            else self.config.scheduler.default_task_timeout_s
+        )
+        if self.deadline is not None:
+            clamped = self.deadline.clamp(requested)
+            if clamped is not None:
+                return max(0.1, clamped)
+        return requested
 
     def _base_for(self, task: TaskSpec) -> str | None:
         """The revision a task's worktree should start from.
@@ -313,6 +328,17 @@ class Scheduler:
                 self._cancel_task(task.id, set())
                 return TaskOutcome(
                     task_id=task.id, status=TaskStatus.CANCELLED, attempts=attempts
+                )
+            if self.deadline is not None and self.deadline.expired():
+                # Starting an attempt we cannot finish would only make the
+                # overrun larger.
+                self._cancel_task(task.id, set())
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.CANCELLED,
+                    attempts=attempts,
+                    error="the run exceeded its absolute deadline",
+                    error_class="timeout",
                 )
             attempts += 1
             try:

@@ -202,6 +202,25 @@ class RunConfig(_Base):
     data_dir: str | None = None
     strategy_override: str | None = None
     max_workers_override: int | None = Field(default=None, ge=1, le=64)
+    deadline_s: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "An absolute deadline for the whole run, covering inspection, "
+            "planning, worker requests, verification, retries and "
+            "integration.  A per-request timeout is not a whole-run deadline: "
+            "a run that makes many requests can exceed any single request's "
+            "limit while never breaching one."
+        ),
+    )
+    teardown_reserve_s: float = Field(
+        default=5.0,
+        ge=0,
+        description=(
+            "Time reserved at the end of the deadline for cleanup, so that "
+            "the run stops with time left to reclaim what it owns."
+        ),
+    )
 
     @field_validator("roles")
     @classmethod

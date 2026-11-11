@@ -116,6 +116,28 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def _render_outcome(outcome: RunOutcome) -> None:
     console.print(f"[bold]run[/bold] {outcome.run_id}  status={outcome.status.value}")
+    if outcome.contract is not None:
+        verdict = outcome.contract
+        colour = {
+            "accepted": "green",
+            "rejected": "red",
+            "inconclusive": "yellow",
+            "timed_out": "yellow",
+            "cancelled": "yellow",
+        }.get(verdict.outcome.value, "white")
+        console.print(
+            f"[bold]contract[/bold] [{colour}]{verdict.outcome.value}[/{colour}]  "
+            f"established={len(verdict.established)} "
+            f"pre-satisfied={len(verdict.pre_satisfied)} "
+            f"not-satisfied={len(verdict.not_satisfied)} "
+            f"unverifiable={len(verdict.unverifiable)}"
+        )
+        console.print(f"[dim]{verdict.detail}[/dim]")
+        if verdict.pre_satisfied:
+            console.print(
+                "[yellow]these outcomes were already true before the work and "
+                "establish nothing:[/yellow] " + ", ".join(verdict.pre_satisfied)
+            )
     if outcome.decision:
         console.print(f"[dim]{outcome.decision.explain()}[/dim]")
         for line in outcome.decision.rationale:

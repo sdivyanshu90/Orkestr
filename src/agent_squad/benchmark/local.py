@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import InfrastructureError, ValidationError
+from ..runtime.registry import ResourceKind
 from .harness import STRATEGIES
 
 #: Where the GGUF weights live.  Overridable so the harness can point at a
@@ -258,6 +259,14 @@ class ServerConfig:
     VRAM that the suite's *own* servers are holding -- which would
     otherwise shrink every model's layer count as more models load.
     """
+    registry: Any = None
+    """An optional :class:`~agent_squad.runtime.registry.ResourceRegistry`.
+
+    When one is supplied, every server this suite starts is recorded in it,
+    so that an interrupted suite can be reclaimed rather than leaving a
+    model server holding the GPU.
+    """
+    cleanup_grace_s: float = 5.0
 
     def resolve_port(self) -> int:
         if self.port:
@@ -470,6 +479,15 @@ class LlamaServer:
             start_new_session=True,
             env=env,
         )
+        if self.config.registry is not None:
+            # The server is recorded before it is waited on, so that even a
+            # failure during startup leaves a reclaimable record.
+            self.config.registry.register_process(
+                kind=ResourceKind.MODEL_SERVER,
+                identifier=f"llama-server:{spec.id}:{port}",
+                pid=self._process.pid,
+                pgid=self._process.pid,
+            )
         self._wait_ready(port, started)
         return ServerHandle(
             spec=spec,
