@@ -1,0 +1,28 @@
+{
+  "captured_at": 1794331121.1867242,
+  "full_suite": {
+    "command": "timeout 180 .venv/bin/python -m pytest -q --tb=short",
+    "sandbox": "outside; API TestClient stalled inside sandbox",
+    "exit_code": 0,
+    "tests_passed": 294
+  },
+  "focused_benchmark_and_provider_tests": {
+    "exit_code": 0,
+    "tests_passed": 31
+  },
+  "new_scoring_and_cleanup_tests": {
+    "exit_code": 0,
+    "tests_passed": 3
+  },
+  "ruff_scripts": {
+    "exit_code": 0
+  },
+  "final_artifact_audit": {
+    "checked_at": 1794335221.4110105,
+    "workflow_completed": 62,
+    "workflow_cancelled": 2,
+    "direct_http_200_responses": 45,
+    "all_benchmark_model_roots_removed": true,
+    "residual_server_timing_limitation_documented": true
+  }
+}

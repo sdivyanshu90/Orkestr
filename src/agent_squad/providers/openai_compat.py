@@ -230,8 +230,13 @@ class OpenAICompatProvider(BaseProvider):
                 f"model request timed out after {self.timeout_s}s", provider=self.name
             ) from exc
         except httpx.HTTPError as exc:
+            # httpx exceptions often have an empty string representation, so
+            # the type is included: "model request failed: " on its own tells
+            # an operator nothing.
+            detail = str(exc) or type(exc).__name__
             raise TransientModelError(
-                f"model request failed: {exc}", provider=self.name
+                f"model request failed ({type(exc).__name__}): {detail}",
+                provider=self.name,
             ) from exc
 
         elapsed = time.monotonic() - started

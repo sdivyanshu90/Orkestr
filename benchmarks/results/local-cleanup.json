@@ -1,0 +1,29 @@
+{
+  "finished_at": 1794335008.2917354,
+  "roots": [
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models",
+      "bytes_before": 15725051520,
+      "existed_before": true,
+      "absent_after": true
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/localmodels",
+      "bytes_before": 1117320768,
+      "existed_before": true,
+      "absent_after": true
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/llamacpp",
+      "bytes_before": 2169312800,
+      "existed_before": true,
+      "absent_after": true
+    }
+  ],
+  "stopped_server_pids": [
+    270787
+  ],
+  "errors": [],
+  "complete": true,
+  "scope": "Benchmark-owned model caches and selected runtime only; unrelated user models are not inspected or removed."
+}

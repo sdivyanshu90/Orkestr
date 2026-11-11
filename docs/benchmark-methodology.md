@@ -213,3 +213,24 @@ harness must be able to observe a strategy losing.
 - **The scheduler's own overhead is included** in wall-clock time, which is
   correct for an end-to-end measurement but means the measurement cannot
   separate "work done" from "orchestration done".
+
+<!-- local-model-methodology:start -->
+## Complementary local-model measurements
+
+The deterministic results above measure orchestration with a mock provider.
+The local experiment exercises eight actual GGUF checkpoints through CUDA
+llama.cpp, the production OpenAI-compatible adapter, the LLM planner and the
+worker loop. It comprises four scenario requests x two strategies x eight
+checkpoints, with one trial per combination. Planner-generated criteria can
+weaken the original request, and worker accounting excludes planning. Runtime
+success is therefore a compatibility measure, not a fixed-test accuracy score.
+
+A separate companion experiment sends five fixed prompts per checkpoint and
+repeats them on Qwen2.5-Coder with GPU offload disabled. It retains all API
+responses and scores arithmetic, extraction, sorting, a restricted Python
+function and a structured tool call independently. Concurrency, output caps,
+warmup, timing definitions and model provenance are documented in the
+[local methodology](local-benchmark-methodology.md). See the
+[local workflow metrics](local-benchmark-results.md) and
+[fixed-score inference metrics](local-inference-results.md) for the measurements.
+<!-- local-model-methodology:end -->

@@ -1,0 +1,58 @@
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+Waiting for orchestration sweep before sequential inference probes...
+qwen2.5-coder-1.5b-instruct gpu arithmetic: passed=True 0.28s
+qwen2.5-coder-1.5b-instruct gpu extraction: passed=False 0.23s
+qwen2.5-coder-1.5b-instruct gpu sorting: passed=False 0.29s
+qwen2.5-coder-1.5b-instruct gpu python_square: passed=True 0.43s
+qwen2.5-coder-1.5b-instruct gpu tool_call: passed=False 0.31s
+qwen3-1.7b gpu arithmetic: passed=True 0.19s
+qwen3-1.7b gpu extraction: passed=True 2.05s
+qwen3-1.7b gpu sorting: passed=False 0.41s
+qwen3-1.7b gpu python_square: passed=True 0.53s
+qwen3-1.7b gpu tool_call: passed=True 0.30s
+deepseek-r1-distill-qwen-1.5b gpu arithmetic: passed=False 2.37s
+deepseek-r1-distill-qwen-1.5b gpu extraction: passed=True 1.77s
+deepseek-r1-distill-qwen-1.5b gpu sorting: passed=False 2.29s
+deepseek-r1-distill-qwen-1.5b gpu python_square: passed=False 2.20s
+deepseek-r1-distill-qwen-1.5b gpu tool_call: passed=False 2.15s
+gemma-3-1b-it gpu arithmetic: passed=True 0.48s
+gemma-3-1b-it gpu extraction: passed=True 0.27s
+gemma-3-1b-it gpu sorting: passed=False 0.36s
+gemma-3-1b-it gpu python_square: passed=False 0.19s
+gemma-3-1b-it gpu tool_call: passed=False 0.20s
+llama-3.2-1b-instruct gpu arithmetic: passed=True 0.17s
+llama-3.2-1b-instruct gpu extraction: passed=True 0.15s
+llama-3.2-1b-instruct gpu sorting: passed=False 0.30s
+llama-3.2-1b-instruct gpu python_square: passed=True 0.37s
+llama-3.2-1b-instruct gpu tool_call: passed=False 0.15s
+phi-4-mini-instruct gpu arithmetic: passed=True 0.66s
+phi-4-mini-instruct gpu extraction: passed=False 0.48s
+phi-4-mini-instruct gpu sorting: passed=False 0.50s
+phi-4-mini-instruct gpu python_square: passed=True 0.53s
+phi-4-mini-instruct gpu tool_call: passed=False 0.24s
+minimax-m1-distill-qwen3-4b gpu arithmetic: passed=True 1.34s
+minimax-m1-distill-qwen3-4b gpu extraction: passed=False 4.66s
+minimax-m1-distill-qwen3-4b gpu sorting: passed=False 4.76s
+minimax-m1-distill-qwen3-4b gpu python_square: passed=False 4.76s
+minimax-m1-distill-qwen3-4b gpu tool_call: passed=True 2.69s
+kimi-k3-distill-qwen3.5-9b gpu arithmetic: passed=True 16.83s
+kimi-k3-distill-qwen3.5-9b gpu extraction: passed=True 56.43s
+kimi-k3-distill-qwen3.5-9b gpu sorting: passed=True 25.66s
+kimi-k3-distill-qwen3.5-9b gpu python_square: passed=False 55.89s
+kimi-k3-distill-qwen3.5-9b gpu tool_call: passed=True 14.41s
+qwen2.5-coder-1.5b-instruct cpu arithmetic: passed=True 1.22s
+qwen2.5-coder-1.5b-instruct cpu extraction: passed=False 1.53s
+qwen2.5-coder-1.5b-instruct cpu sorting: passed=False 2.18s
+qwen2.5-coder-1.5b-instruct cpu python_square: passed=True 1.59s
+qwen2.5-coder-1.5b-instruct cpu tool_call: passed=False 2.34s

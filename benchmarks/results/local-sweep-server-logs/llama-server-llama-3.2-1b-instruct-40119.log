@@ -1,0 +1,291 @@
+0.00.938.566 I srv  llama_server: initializing ...
+0.00.938.602 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.938.744 I srv  init_listene: The UI is disabled
+0.00.938.762 I srv  init_listene: Use --ui/--no-ui (or deprecated --webui/--no-webui) to enable/disable
+0.00.938.855 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.943.444 I srv    load_model: loading model '/home/somu/.cache/agent-squad-benchmark/models/llama-3.2-1b-instruct.gguf'
+0.03.273.984 I cmn          init: llama threadpool init, n_threads = 6
+0.03.528.590 I srv    load_model: initializing, n_slots = 8, n_ctx_slot = 3072, kv_unified = 'false'
+0.03.534.510 I srv  server_run_i: model loaded
+0.03.534.552 I srv  server_on_li: listening on http://127.0.0.1:40119
+0.12.019.358 I slot get_availabl: id  0 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.12.019.650 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.13.506.340 I slot print_timing: id  0 | task 0 | prompt eval time =     164.56 ms /   462 tokens (    0.36 ms per token,  2807.54 tokens per second)
+0.13.506.369 I slot print_timing: id  0 | task 0 |        eval time =    1322.07 ms /    97 tokens (   13.77 ms per token,    72.61 tokens per second)
+0.13.506.369 I slot print_timing: id  0 | task 0 |       total time =    1486.63 ms /   559 tokens
+0.13.506.376 I slot print_timing: id  0 | task 0 |    graphs reused =         95
+0.13.506.377 I slot print_timing: id  0 | task 0 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.13.506.482 I slot      release: id  0 | task 0 | stop processing: n_tokens = 558, truncated = 0
+0.13.526.621 I slot get_availabl: id  1 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.13.526.702 I slot launch_slot_: id  1 | task 98 | processing task, is_child = 0
+0.14.221.302 I slot print_timing: id  1 | task 98 | prompt eval time =     315.06 ms /  1175 tokens (    0.27 ms per token,  3729.39 tokens per second)
+0.14.221.329 I slot print_timing: id  1 | task 98 |        eval time =     351.12 ms /    30 tokens (   12.11 ms per token,    82.59 tokens per second)
+0.14.221.330 I slot print_timing: id  1 | task 98 |       total time =     666.19 ms /  1205 tokens
+0.14.221.331 I slot print_timing: id  1 | task 98 |    graphs reused =        123
+0.14.221.331 I slot print_timing: id  1 | task 98 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.14.221.443 I slot      release: id  1 | task 98 | stop processing: n_tokens = 1204, truncated = 0
+0.14.227.273 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.900 (> 0.100 thold), f_keep = 0.976
+0.14.227.369 I slot launch_slot_: id  1 | task 129 | processing task, is_child = 0
+0.14.718.270 I slot print_timing: id  1 | task 129 | prompt eval time =      52.60 ms /   131 tokens (    0.40 ms per token,  2490.30 tokens per second)
+0.14.718.304 I slot print_timing: id  1 | task 129 |        eval time =     438.06 ms /    36 tokens (   12.52 ms per token,    79.90 tokens per second)
+0.14.718.305 I slot print_timing: id  1 | task 129 |       total time =     490.67 ms /   167 tokens
+0.14.718.307 I slot print_timing: id  1 | task 129 |    graphs reused =        157
+0.14.718.307 I slot print_timing: id  1 | task 129 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.14.718.428 I slot      release: id  1 | task 129 | stop processing: n_tokens = 1341, truncated = 0
+0.14.718.496 W common_chat_peg_parse: unparsed peg-native output: {"type": "function", "function": "write_file", "parameters": {"f": "src/greeter.py", "m": "greet()"}}
+0.14.718.781 W srv          stop: cancel task, id_task = 129
+0.14.718.951 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.14.770.102 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.346 (> 0.100 thold), f_keep = 0.285
+0.14.770.457 I slot launch_slot_: id  0 | task 167 | processing task, is_child = 0
+0.16.247.475 I slot print_timing: id  0 | task 167 | prompt eval time =      92.46 ms /   301 tokens (    0.31 ms per token,  3255.39 tokens per second)
+0.16.247.573 I slot print_timing: id  0 | task 167 |        eval time =    1303.84 ms /    97 tokens (   13.58 ms per token,    73.63 tokens per second)
+0.16.247.575 I slot print_timing: id  0 | task 167 |       total time =    1396.30 ms /   398 tokens
+0.16.247.578 I slot print_timing: id  0 | task 167 |    graphs reused =        251
+0.16.247.579 I slot print_timing: id  0 | task 167 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.16.248.325 I slot      release: id  0 | task 167 | stop processing: n_tokens = 556, truncated = 0
+0.16.269.709 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.748 (> 0.100 thold), f_keep = 0.652
+0.16.269.810 I slot launch_slot_: id  1 | task 265 | processing task, is_child = 0
+0.16.740.407 I slot print_timing: id  1 | task 265 | prompt eval time =      90.36 ms /   294 tokens (    0.31 ms per token,  3253.54 tokens per second)
+0.16.740.442 I slot print_timing: id  1 | task 265 |        eval time =     359.19 ms /    30 tokens (   12.39 ms per token,    80.74 tokens per second)
+0.16.740.443 I slot print_timing: id  1 | task 265 |       total time =     449.56 ms /   324 tokens
+0.16.740.445 I slot print_timing: id  1 | task 265 |    graphs reused =        279
+0.16.740.445 I slot print_timing: id  1 | task 265 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.16.740.594 I slot      release: id  1 | task 265 | stop processing: n_tokens = 1197, truncated = 0
+0.16.747.838 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.899 (> 0.100 thold), f_keep = 0.976
+0.16.747.908 I slot launch_slot_: id  1 | task 296 | processing task, is_child = 0
+0.17.249.872 I slot print_timing: id  1 | task 296 | prompt eval time =      50.38 ms /   131 tokens (    0.38 ms per token,  2600.39 tokens per second)
+0.17.249.909 I slot print_timing: id  1 | task 296 |        eval time =     451.49 ms /    36 tokens (   12.90 ms per token,    77.52 tokens per second)
+0.17.249.910 I slot print_timing: id  1 | task 296 |       total time =     501.87 ms /   167 tokens
+0.17.249.912 I slot print_timing: id  1 | task 296 |    graphs reused =        313
+0.17.249.912 I slot print_timing: id  1 | task 296 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.17.250.040 I slot      release: id  1 | task 296 | stop processing: n_tokens = 1334, truncated = 0
+0.17.250.093 W common_chat_peg_parse: unparsed peg-native output: {"type": "function", "function": "write_file", "parameters": {"f": "src/greeter.py", "s": "greet()"}}
+0.17.250.151 W srv          stop: cancel task, id_task = 296
+0.17.250.279 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.17.299.215 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.303 (> 0.100 thold), f_keep = 0.241
+0.17.299.770 I slot launch_slot_: id  0 | task 334 | processing task, is_child = 0
+0.19.941.224 I slot print_timing: id  0 | task 334 | prompt eval time =     116.16 ms /   308 tokens (    0.38 ms per token,  2651.63 tokens per second)
+0.19.941.261 I slot print_timing: id  0 | task 334 |        eval time =    2418.61 ms /   194 tokens (   12.53 ms per token,    79.80 tokens per second)
+0.19.941.262 I slot print_timing: id  0 | task 334 |       total time =    2534.77 ms /   502 tokens
+0.19.941.264 I slot print_timing: id  0 | task 334 |    graphs reused =        504
+0.19.941.265 I slot print_timing: id  0 | task 334 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.19.941.387 I slot      release: id  0 | task 334 | stop processing: n_tokens = 635, truncated = 0
+0.19.962.574 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.656 (> 0.100 thold), f_keep = 0.655
+0.19.962.655 I slot launch_slot_: id  1 | task 529 | processing task, is_child = 0
+0.22.761.098 I slot print_timing: id  1 | task 529 | prompt eval time =     137.69 ms /   458 tokens (    0.30 ms per token,  3326.26 tokens per second)
+0.22.761.126 I slot print_timing: id  1 | task 529 |        eval time =    2644.93 ms /   211 tokens (   12.59 ms per token,    79.40 tokens per second)
+0.22.761.126 I slot print_timing: id  1 | task 529 |       total time =    2782.63 ms /   669 tokens
+0.22.761.128 I slot print_timing: id  1 | task 529 |    graphs reused =        712
+0.22.761.128 I slot print_timing: id  1 | task 529 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.22.761.244 I slot      release: id  1 | task 529 | stop processing: n_tokens = 1542, truncated = 0
+0.22.761.293 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "test-exists", "parameters": {"workdir": "/tmp/agent-squad-local-es8y5c0g/data/runs/run_01M736ZBC40H7SY/worktrees/wt_01M736ZDZP028YS", "path": "tests/test_calc.py", "expected": true}}; {"name": "test-passes", "parameters": {"workdir": "/tmp/agent-squad-local-es8y5c0g/data/runs/run_01M736ZBC40H7SY/worktrees/wt_01M736ZDZP028YS", "path": "tests/test_calc.py", "expected": true}}
+0.22.761.349 W srv          stop: cancel task, id_task = 529
+0.22.761.461 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.22.809.749 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.351 (> 0.100 thold), f_keep = 0.244
+0.22.810.288 I slot launch_slot_: id  0 | task 742 | processing task, is_child = 0
+0.25.406.982 I slot print_timing: id  0 | task 742 | prompt eval time =      80.85 ms /   287 tokens (    0.28 ms per token,  3549.83 tokens per second)
+0.25.407.014 I slot print_timing: id  0 | task 742 |        eval time =    2464.29 ms /   192 tokens (   12.90 ms per token,    77.51 tokens per second)
+0.25.407.015 I slot print_timing: id  0 | task 742 |       total time =    2545.14 ms /   479 tokens
+0.25.407.017 I slot print_timing: id  0 | task 742 |    graphs reused =        901
+0.25.407.017 I slot print_timing: id  0 | task 742 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.25.407.136 I slot      release: id  0 | task 742 | stop processing: n_tokens = 633, truncated = 0
+0.25.428.212 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.658 (> 0.100 thold), f_keep = 0.567
+0.25.428.309 I slot launch_slot_: id  1 | task 935 | processing task, is_child = 0
+0.28.267.924 I slot print_timing: id  1 | task 935 | prompt eval time =     157.88 ms /   455 tokens (    0.35 ms per token,  2881.95 tokens per second)
+0.28.267.954 I slot print_timing: id  1 | task 935 |        eval time =    2660.78 ms /   208 tokens (   12.85 ms per token,    77.80 tokens per second)
+0.28.267.956 I slot print_timing: id  1 | task 935 |       total time =    2818.66 ms /   663 tokens
+0.28.267.957 I slot print_timing: id  1 | task 935 |    graphs reused =       1107
+0.28.267.957 I slot print_timing: id  1 | task 935 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.28.269.376 I slot      release: id  1 | task 935 | stop processing: n_tokens = 1536, truncated = 0
+0.28.269.465 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-l_swqqt0/data/runs/run_01M736ZGRA0JJVJ/worktrees/wt_01M736ZKAF010CV", "file_path": "tests/test_calc.py", "content_type": "text"}}; {"name": "git_diff", "parameters": {"workdir": "/tmp/agent-squad-local-l_swqqt0/data/runs/run_01M736ZGRA0JJVJ/worktrees/wt_01M736ZKAF010CV", "path": "tests/test_calc.py", "diff_type": "path"}}
+0.28.269.641 W srv          stop: cancel task, id_task = 935
+0.28.269.856 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.28.328.762 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.273 (> 0.100 thold), f_keep = 0.212
+0.28.329.590 I slot launch_slot_: id  0 | task 1145 | processing task, is_child = 0
+0.31.490.648 I slot print_timing: id  0 | task 1145 | n_gen =    237, tg =  78.59 t/s, tg_3s =  78.93 t/s
+0.31.611.520 I slot print_timing: id  0 | task 1145 | prompt eval time =     106.33 ms /   357 tokens (    0.30 ms per token,  3357.47 tokens per second)
+0.31.611.550 I slot print_timing: id  0 | task 1145 |        eval time =    3123.63 ms /   246 tokens (   12.75 ms per token,    78.43 tokens per second)
+0.31.611.551 I slot print_timing: id  0 | task 1145 |       total time =    3229.96 ms /   603 tokens
+0.31.611.552 I slot print_timing: id  0 | task 1145 |    graphs reused =       1350
+0.31.611.552 I slot print_timing: id  0 | task 1145 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.31.612.012 I slot      release: id  0 | task 1145 | stop processing: n_tokens = 736, truncated = 0
+0.31.636.231 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.710 (> 0.100 thold), f_keep = 0.569
+0.31.636.300 I slot launch_slot_: id  1 | task 1392 | processing task, is_child = 0
+0.34.775.103 I slot print_timing: id  1 | task 1392 | n_gen =    239, tg =  79.05 t/s, tg_3s =  79.38 t/s
+0.35.950.089 I slot print_timing: id  1 | task 1392 | prompt eval time =     102.05 ms /   357 tokens (    0.29 ms per token,  3498.42 tokens per second)
+0.35.950.119 I slot print_timing: id  1 | task 1392 |        eval time =    4185.68 ms /   331 tokens (   12.68 ms per token,    78.84 tokens per second)
+0.35.950.119 I slot print_timing: id  1 | task 1392 |       total time =    4287.73 ms /   688 tokens
+0.35.950.121 I slot print_timing: id  1 | task 1392 |    graphs reused =       1677
+0.35.950.121 I slot print_timing: id  1 | task 1392 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.35.950.234 I slot      release: id  1 | task 1392 | stop processing: n_tokens = 1561, truncated = 0
+0.35.950.291 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZP4K0RMR8/worktrees/wt_01M736ZSCD0KP5N", "path": "alpha.py"}}; {"name": "git_diff", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZP4K0RMR8/worktrees/wt_01M736ZSCD0KP5N", "path": "alpha.py"}}; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZP4K0RMR8/worktrees/wt_01M736ZSCD0KP5N", "path": "alpha.py"}}; {"name": "git_status", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZP4K0RMR8/worktrees/wt_01M736ZSCD0KP5N", "path": "alpha.py"}}
+0.35.950.350 W srv          stop: cancel task, id_task = 1392
+0.35.950.473 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.35.976.083 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.736 (> 0.100 thold), f_keep = 0.579
+0.35.976.153 I slot launch_slot_: id  1 | task 1725 | processing task, is_child = 0
+0.38.389.761 I slot print_timing: id  1 | task 1725 | prompt eval time =      95.50 ms /   325 tokens (    0.29 ms per token,  3403.21 tokens per second)
+0.38.389.782 I slot print_timing: id  1 | task 1725 |        eval time =    2318.02 ms /   184 tokens (   12.67 ms per token,    78.95 tokens per second)
+0.38.389.782 I slot print_timing: id  1 | task 1725 |       total time =    2413.52 ms /   509 tokens
+0.38.389.783 I slot print_timing: id  1 | task 1725 |    graphs reused =       1858
+0.38.389.784 I slot print_timing: id  1 | task 1725 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.38.389.881 I slot      release: id  1 | task 1725 | stop processing: n_tokens = 1412, truncated = 0
+0.38.389.935 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZXM20QEYZ/worktrees/wt_01M736ZXM20QEYZ", "path": "beta.py"}}; {"name": "git_diff", "parameters": {"workdir": "/tmp/agent-squad-local-psibj5vx/data/runs/run_01M736ZXM20QEYZ/worktrees/wt_01M736ZXM20QEYZ", "path": "beta.py"}}
+0.38.389.996 W srv          stop: cancel task, id_task = 1725
+0.38.390.147 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.38.440.607 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.310 (> 0.100 thold), f_keep = 0.207
+0.38.441.004 I slot launch_slot_: id  0 | task 1911 | processing task, is_child = 0
+0.41.595.145 I slot print_timing: id  0 | task 1911 | n_gen =    237, tg =  78.57 t/s, tg_3s =  78.91 t/s
+0.41.708.793 I slot print_timing: id  0 | task 1911 | prompt eval time =     101.44 ms /   339 tokens (    0.30 ms per token,  3341.84 tokens per second)
+0.41.708.825 I slot print_timing: id  0 | task 1911 |        eval time =    3117.16 ms /   246 tokens (   12.72 ms per token,    78.60 tokens per second)
+0.41.708.826 I slot print_timing: id  0 | task 1911 |       total time =    3218.60 ms /   585 tokens
+0.41.708.827 I slot print_timing: id  0 | task 1911 |    graphs reused =       2101
+0.41.708.828 I slot print_timing: id  0 | task 1911 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.41.709.022 I slot      release: id  0 | task 1911 | stop processing: n_tokens = 736, truncated = 0
+0.41.737.247 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.715 (> 0.100 thold), f_keep = 0.619
+0.41.737.351 I slot launch_slot_: id  1 | task 2158 | processing task, is_child = 0
+0.44.865.443 I slot print_timing: id  1 | task 2158 | n_gen =    240, tg =  79.61 t/s, tg_3s =  79.95 t/s
+0.47.869.701 I slot print_timing: id  1 | task 2158 | n_gen =    478, tg =  79.42 t/s, tg_3s =  79.22 t/s
+0.48.291.259 I slot print_timing: id  1 | task 2158 | prompt eval time =     103.34 ms /   348 tokens (    0.30 ms per token,  3367.62 tokens per second)
+0.48.291.287 I slot print_timing: id  1 | task 2158 |        eval time =    6427.76 ms /   512 tokens (   12.58 ms per token,    79.50 tokens per second)
+0.48.291.288 I slot print_timing: id  1 | task 2158 |       total time =    6531.10 ms /   860 tokens
+0.48.291.289 I slot print_timing: id  1 | task 2158 |    graphs reused =       2609
+0.48.291.289 I slot print_timing: id  1 | task 2158 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.48.291.464 I slot      release: id  1 | task 2158 | stop processing: n_tokens = 1733, truncated = 0
+0.48.291.522 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "git_diff", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "git_status", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M737037X00SC6", "path": "alpha.py"}}; {"name": "read_file",
+0.48.291.588 W srv          stop: cancel task, id_task = 2158
+0.48.291.724 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.48.304.280 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.738 (> 0.100 thold), f_keep = 0.520
+0.48.304.346 I slot launch_slot_: id  1 | task 2672 | processing task, is_child = 0
+0.50.439.291 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.250 (> 0.100 thold), f_keep = 0.182
+0.50.440.225 I slot launch_slot_: id  0 | task 2834 | processing task, is_child = 0
+0.51.413.573 I slot print_timing: id  1 | task 2672 | n_gen =    218, tg =  71.94 t/s, tg_3s =  72.27 t/s
+0.53.068.269 I slot print_timing: id  0 | task 2834 | prompt eval time =     149.13 ms /   402 tokens (    0.37 ms per token,  2695.63 tokens per second)
+0.53.068.299 I slot print_timing: id  0 | task 2834 |        eval time =    2478.81 ms /   158 tokens (   15.79 ms per token,    63.34 tokens per second)
+0.53.068.300 I slot print_timing: id  0 | task 2834 |       total time =    2627.94 ms /   560 tokens
+0.53.068.302 I slot print_timing: id  0 | task 2834 |    graphs reused =       2923
+0.53.068.302 I slot print_timing: id  0 | task 2834 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.53.068.480 I slot      release: id  0 | task 2834 | stop processing: n_tokens = 693, truncated = 0
+0.53.105.830 I slot get_availabl: id  2 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.53.171.841 I slot launch_slot_: id  2 | task 2994 | processing task, is_child = 0
+0.53.609.042 I slot print_timing: id  1 | task 2672 | prompt eval time =      92.81 ms /   320 tokens (    0.29 ms per token,  3447.72 tokens per second)
+0.53.609.083 I slot print_timing: id  1 | task 2672 |        eval time =    5211.76 ms /   342 tokens (   15.28 ms per token,    65.43 tokens per second)
+0.53.609.084 I slot print_timing: id  1 | task 2672 |       total time =    5304.57 ms /   662 tokens
+0.53.609.086 I slot print_timing: id  1 | task 2672 |    graphs reused =       2943
+0.53.609.087 I slot print_timing: id  1 | task 2672 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.53.609.289 I slot      release: id  1 | task 2672 | stop processing: n_tokens = 1563, truncated = 0
+0.53.609.406 W common_chat_peg_parse: unparsed peg-native output: ; {"name": "read_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M73703860NEQJ", "path": "beta.py", "content_type": "utf-8"}}; {"name": "git_diff", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M73703860NEQJ", "path": "beta.py"}}; {"name": "http_request", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M73703860NEQJ", "method": "GET", "path": "/beta.py"}}; {"name": "write_file", "parameters": {"workdir": "/tmp/agent-squad-local-itv0p9hw/data/runs/run_01M737000S0B5RB/worktrees/wt_01M73703860NEQJ", "path": "beta.py", "content": "def beta(): return 2"}}
+0.53.609.562 W srv          stop: cancel task, id_task = 2672
+0.53.609.860 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+0.53.702.578 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.287 (> 0.100 thold), f_keep = 0.224
+0.53.703.033 I slot launch_slot_: id  0 | task 3024 | processing task, is_child = 0
+0.56.023.343 I slot print_timing: id  2 | task 2994 | prompt eval time =     109.63 ms /   276 tokens (    0.40 ms per token,  2517.58 tokens per second)
+0.56.023.390 I slot print_timing: id  2 | task 2994 |        eval time =    2729.20 ms /    92 tokens (   29.99 ms per token,    33.34 tokens per second)
+0.56.023.391 I slot print_timing: id  2 | task 2994 |       total time =    2838.83 ms /   368 tokens
+0.56.023.392 I slot print_timing: id  2 | task 2994 |    graphs reused =       2949
+0.56.023.393 I slot print_timing: id  2 | task 2994 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.56.023.612 I slot      release: id  2 | task 2994 | stop processing: n_tokens = 1241, truncated = 0
+0.56.898.107 I slot print_timing: id  0 | task 3024 | n_gen =    125, tg =  41.20 t/s, tg_3s =  41.54 t/s
+0.57.590.022 I slot print_timing: id  0 | task 3024 | prompt eval time =     147.08 ms /   385 tokens (    0.38 ms per token,  2617.66 tokens per second)
+0.57.590.053 I slot print_timing: id  0 | task 3024 |        eval time =    3701.27 ms /   175 tokens (   21.27 ms per token,    47.01 tokens per second)
+0.57.590.053 I slot print_timing: id  0 | task 3024 |       total time =    3848.35 ms /   560 tokens
+0.57.590.055 I slot print_timing: id  0 | task 3024 |    graphs reused =       3058
+0.57.590.055 I slot print_timing: id  0 | task 3024 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.57.590.149 I slot      release: id  0 | task 3024 | stop processing: n_tokens = 714, truncated = 0
+0.57.670.140 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.757 (> 0.100 thold), f_keep = 0.559
+0.57.670.201 I slot launch_slot_: id  1 | task 3200 | processing task, is_child = 0
+0.59.019.560 I slot print_timing: id  1 | task 3200 | prompt eval time =      96.99 ms /   281 tokens (    0.35 ms per token,  2897.24 tokens per second)
+0.59.019.589 I slot print_timing: id  1 | task 3200 |        eval time =    1198.43 ms /    91 tokens (   13.32 ms per token,    75.10 tokens per second)
+0.59.019.589 I slot print_timing: id  1 | task 3200 |       total time =    1295.42 ms /   372 tokens
+0.59.019.590 I slot print_timing: id  1 | task 3200 |    graphs reused =       3147
+0.59.019.591 I slot print_timing: id  1 | task 3200 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.59.019.777 I slot      release: id  1 | task 3200 | stop processing: n_tokens = 1245, truncated = 0
+0.59.026.836 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.770 (> 0.100 thold), f_keep = 0.727
+0.59.026.918 I slot launch_slot_: id  1 | task 3292 | processing task, is_child = 0
+0.59.154.059 I slot print_timing: id  1 | task 3292 | prompt eval time =      41.92 ms /   271 tokens (    0.15 ms per token,  6464.23 tokens per second)
+0.59.154.087 I slot print_timing: id  1 | task 3292 |        eval time =      85.06 ms /    14 tokens (    6.54 ms per token,   152.83 tokens per second)
+0.59.154.088 I slot print_timing: id  1 | task 3292 |       total time =     126.99 ms /   285 tokens
+0.59.154.089 I slot print_timing: id  1 | task 3292 |    graphs reused =       3159
+0.59.154.089 I slot print_timing: id  1 | task 3292 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.59.154.228 I slot      release: id  1 | task 3292 | stop processing: n_tokens = 1189, truncated = 0
+0.59.160.694 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.900 (> 0.100 thold), f_keep = 0.989
+0.59.160.766 I slot launch_slot_: id  1 | task 3307 | processing task, is_child = 0
+0.59.271.235 I slot print_timing: id  1 | task 3307 | prompt eval time =      25.86 ms /   131 tokens (    0.20 ms per token,  5065.35 tokens per second)
+0.59.271.266 I slot print_timing: id  1 | task 3307 |        eval time =      84.43 ms /    14 tokens (    6.49 ms per token,   153.98 tokens per second)
+0.59.271.267 I slot print_timing: id  1 | task 3307 |       total time =     110.29 ms /   145 tokens
+0.59.271.268 I slot print_timing: id  1 | task 3307 |    graphs reused =       3171
+0.59.271.270 I slot print_timing: id  1 | task 3307 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.59.271.588 I slot      release: id  1 | task 3307 | stop processing: n_tokens = 1320, truncated = 0
+1.10.752.283 I slot get_availabl: id  2 | task -1 | selected slot by LCP similarity, f_sim_best = 0.849 (> 0.100 thold), f_keep = 0.927
+1.10.753.752 I slot launch_slot_: id  2 | task 3322 | processing task, is_child = 0
+1.11.780.098 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.666 (> 0.100 thold), f_keep = 0.686
+1.11.781.102 I slot launch_slot_: id  1 | task 3323 | processing task, is_child = 0
+1.12.630.953 I slot print_timing: id  1 | task 3323 | prompt eval time =     126.53 ms /   453 tokens (    0.28 ms per token,  3580.15 tokens per second)
+1.12.630.981 I slot print_timing: id  1 | task 3323 |        eval time =     723.20 ms /    97 tokens (    7.53 ms per token,   132.74 tokens per second)
+1.12.630.982 I slot print_timing: id  1 | task 3323 |       total time =     849.73 ms /   550 tokens
+1.12.630.983 I slot print_timing: id  1 | task 3323 |    graphs reused =       3266
+1.12.630.983 I slot print_timing: id  1 | task 3323 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.12.631.912 I slot      release: id  1 | task 3323 | stop processing: n_tokens = 1454, truncated = 0
+1.12.631.984 W common_chat_peg_parse: unparsed peg-native output: {"type": "function", "function": "commit_changes", "parameters": {"workdir": "/tmp/agent-squad-local-0xcvl_7k/data/runs/run_01M7370EWB0HVR1/worktrees/wt_01M7370JS60QFQ1", "path": "mathutil.py", "name": "square", "description": "Create a new file mathutil.py with the given content"}}
+1.12.632.206 W srv          stop: cancel task, id_task = 3323
+1.12.632.343 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+1.12.639.946 I slot print_timing: id  2 | task 3322 | prompt eval time =     132.76 ms /   204 tokens (    0.65 ms per token,  1536.60 tokens per second)
+1.12.639.967 I slot print_timing: id  2 | task 3322 |        eval time =     723.59 ms /    98 tokens (    7.46 ms per token,   134.05 tokens per second)
+1.12.639.968 I slot print_timing: id  2 | task 3322 |       total time =     856.35 ms /   302 tokens
+1.12.639.969 I slot print_timing: id  2 | task 3322 |    graphs reused =       3266
+1.12.639.969 I slot print_timing: id  2 | task 3322 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.12.640.120 I slot      release: id  2 | task 3322 | stop processing: n_tokens = 1451, truncated = 0
+1.12.640.181 W common_chat_peg_parse: unparsed peg-native output: {"type": "function", "function": "commit_changes", "parameters": {"workdir": "/tmp/agent-squad-local-w4_yrka8/data/runs/run_01M7370BQA0W53N/worktrees/wt_01M7370EAW0JWRV", "path": "mathutil.py", "name": "square", "description": "Implement mathutil.py defining def square(x): returning x * x"}}
+1.12.640.242 W srv          stop: cancel task, id_task = 3322
+1.12.640.381 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+1.12.732.315 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.629 (> 0.100 thold), f_keep = 0.622
+1.12.732.402 I slot launch_slot_: id  1 | task 3424 | processing task, is_child = 0
+1.14.467.286 I slot get_availabl: id  2 | task -1 | selected slot by LCP similarity, f_sim_best = 0.772 (> 0.100 thold), f_keep = 0.622
+1.14.467.743 I slot launch_slot_: id  2 | task 3425 | processing task, is_child = 0
+1.14.690.962 I slot print_timing: id  1 | task 3424 | prompt eval time =     130.71 ms /   533 tokens (    0.25 ms per token,  4077.60 tokens per second)
+1.14.690.986 I slot print_timing: id  1 | task 3424 |        eval time =      92.38 ms /    14 tokens (    7.11 ms per token,   140.73 tokens per second)
+1.14.691.046 I slot print_timing: id  1 | task 3424 |       total time =     223.09 ms /   547 tokens
+1.14.691.064 I slot print_timing: id  1 | task 3424 |    graphs reused =       3278
+1.14.691.065 I slot print_timing: id  1 | task 3424 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.14.691.311 I slot      release: id  1 | task 3424 | stop processing: n_tokens = 1451, truncated = 0
+1.14.691.563 I slot print_timing: id  2 | task 3425 | prompt eval time =     130.76 ms /   267 tokens (    0.49 ms per token,  2041.86 tokens per second)
+1.14.691.585 I slot print_timing: id  2 | task 3425 |        eval time =      92.72 ms /    14 tokens (    7.13 ms per token,   140.20 tokens per second)
+1.14.691.586 I slot print_timing: id  2 | task 3425 |       total time =     223.49 ms /   281 tokens
+1.14.691.586 I slot print_timing: id  2 | task 3425 |    graphs reused =       3278
+1.14.691.586 I slot print_timing: id  2 | task 3425 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.14.691.716 I slot      release: id  2 | task 3425 | stop processing: n_tokens = 1183, truncated = 0
+1.14.715.738 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.917 (> 0.100 thold), f_keep = 0.991
+1.14.715.811 I slot launch_slot_: id  1 | task 3440 | processing task, is_child = 0
+1.14.978.254 I slot print_timing: id  1 | task 3440 | prompt eval time =      25.71 ms /   131 tokens (    0.20 ms per token,  5094.70 tokens per second)
+1.14.978.275 I slot print_timing: id  1 | task 3440 |        eval time =      79.90 ms /    13 tokens (    6.66 ms per token,   150.18 tokens per second)
+1.14.978.276 I slot print_timing: id  1 | task 3440 |       total time =     105.62 ms /   144 tokens
+1.14.978.310 I slot print_timing: id  1 | task 3440 |    graphs reused =       3289
+1.14.978.327 I slot print_timing: id  1 | task 3440 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.14.978.437 I slot      release: id  1 | task 3440 | stop processing: n_tokens = 1581, truncated = 0
+1.14.992.100 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.930 (> 0.100 thold), f_keep = 1.000
+1.14.992.165 I slot launch_slot_: id  1 | task 3454 | processing task, is_child = 0
+1.15.089.489 I slot print_timing: id  1 | task 3454 | prompt eval time =      21.10 ms /   119 tokens (    0.18 ms per token,  5638.74 tokens per second)
+1.15.089.518 I slot print_timing: id  1 | task 3454 |        eval time =      76.08 ms /    13 tokens (    6.34 ms per token,   157.73 tokens per second)
+1.15.089.518 I slot print_timing: id  1 | task 3454 |       total time =      97.18 ms /   132 tokens
+1.15.089.520 I slot print_timing: id  1 | task 3454 |    graphs reused =       3300
+1.15.089.520 I slot print_timing: id  1 | task 3454 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.15.089.646 I slot      release: id  1 | task 3454 | stop processing: n_tokens = 1712, truncated = 0
+1.15.102.755 I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.935 (> 0.100 thold), f_keep = 1.000
+1.15.102.823 I slot launch_slot_: id  1 | task 3468 | processing task, is_child = 0
+1.15.203.312 I slot print_timing: id  1 | task 3468 | prompt eval time =      21.76 ms /   119 tokens (    0.18 ms per token,  5469.76 tokens per second)
+1.15.203.341 I slot print_timing: id  1 | task 3468 |        eval time =      78.60 ms /    13 tokens (    6.55 ms per token,   152.67 tokens per second)
+1.15.203.403 I slot print_timing: id  1 | task 3468 |       total time =     100.36 ms /   132 tokens
+1.15.203.423 I slot print_timing: id  1 | task 3468 |    graphs reused =       3311
+1.15.203.423 I slot print_timing: id  1 | task 3468 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.15.203.629 I slot      release: id  1 | task 3468 | stop processing: n_tokens = 1843, truncated = 0
+1.24.772.983 I slot get_availabl: id  2 | task -1 | selected slot by LCP similarity, f_sim_best = 0.903 (> 0.100 thold), f_keep = 0.989
+1.24.773.236 I slot launch_slot_: id  2 | task 3482 | processing task, is_child = 0
+1.26.062.962 I slot print_timing: id  2 | task 3482 | prompt eval time =      21.26 ms /   126 tokens (    0.17 ms per token,  5926.07 tokens per second)
+1.26.062.987 I slot print_timing: id  2 | task 3482 |        eval time =     127.30 ms /    20 tokens (    6.70 ms per token,   149.26 tokens per second)
+1.26.062.987 I slot print_timing: id  2 | task 3482 |       total time =     148.56 ms /   146 tokens
+1.26.062.989 I slot print_timing: id  2 | task 3482 |    graphs reused =       3329
+1.26.062.990 I slot print_timing: id  2 | task 3482 |   graph reallocs =          0    /     0        (same size) / (changed size)
+1.26.063.118 I slot      release: id  2 | task 3482 | stop processing: n_tokens = 1315, truncated = 0
+1.26.063.181 W common_chat_peg_parse: unparsed peg-native output: {"type": "function", "function": "commit_changes", "parameters": {}}
+1.26.063.246 W srv          stop: cancel task, id_task = 3482
+1.26.063.380 W srv    operator(): got exception: {"error":{"code":500,"message":"The model produced output that does not match the expected peg-native format","type":"server_error"}}
+1.26.147.943 I srv    operator(): operator(): cleaning up before exit...

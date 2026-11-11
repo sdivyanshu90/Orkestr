@@ -1,0 +1,475 @@
+{
+  "suite": "local-models",
+  "started_at": 1794326981.925575,
+  "finished_at": 1794327302.4120498,
+  "duration_s": 320.49,
+  "models": [
+    {
+      "id": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "repo": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.5B",
+      "size_mb": 1129,
+      "note": "code-specialised; the reference small model for this benchmark",
+      "tool_capable": true
+    },
+    {
+      "id": "qwen3-1.7b",
+      "family": "Qwen",
+      "repo": "unsloth/Qwen3-1.7B-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.7B",
+      "size_mb": 1110,
+      "note": "newer generation with a hybrid reasoning mode",
+      "tool_capable": true
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-1.5b",
+      "family": "DeepSeek",
+      "repo": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.5B",
+      "size_mb": 1117,
+      "note": "chain-of-thought distillation; emits long reasoning traces",
+      "tool_capable": true
+    },
+    {
+      "id": "gemma-3-1b-it",
+      "family": "Gemma",
+      "repo": "ggml-org/gemma-3-1b-it-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1B",
+      "size_mb": 819,
+      "note": "smallest model in the set; a useful lower bound",
+      "tool_capable": true
+    },
+    {
+      "id": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "repo": "unsloth/Llama-3.2-1B-Instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1B",
+      "size_mb": 808,
+      "note": "reference small Llama",
+      "tool_capable": true
+    },
+    {
+      "id": "phi-4-mini-instruct",
+      "family": "Phi",
+      "repo": "unsloth/Phi-4-mini-instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "3.8B",
+      "size_mb": 2409,
+      "note": "largest model in the set; tests the GPU-offload path",
+      "tool_capable": true
+    },
+    {
+      "id": "minimax-m1-distill-qwen3-4b",
+      "family": "MiniMax",
+      "repo": "mradermacher/Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "4B",
+      "size_mb": 2497,
+      "note": "the smallest available MiniMax-family artefact; MiniMax-M1 and MiniMax-Text-01 are 456B and do not fit this machine",
+      "tool_capable": true
+    },
+    {
+      "id": "kimi-k3-distill-qwen3.5-9b",
+      "family": "Kimi",
+      "repo": "mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "9B",
+      "size_mb": 5780,
+      "note": "the smallest available Kimi-family artefact; the official Kimi-K3 is 48 GB per shard and does not fit this machine",
+      "tool_capable": true
+    }
+  ],
+  "excluded_models": [
+    {
+      "model": "moonshotai/Kimi-K3",
+      "size": "~750 GB across 15 shards",
+      "reason": "does not fit 8 GB of RAM; the smallest shard alone is 48 GB"
+    },
+    {
+      "model": "moonshotai/Kimi-K2 / K2.5 / Kimi-Linear-48B-A3B",
+      "size": "10.9 GB (Kimi-Linear IQ1_M) upwards",
+      "reason": "exceeds the 8 GB RAM budget even at the lowest quantisation"
+    },
+    {
+      "model": "MiniMax-M1 / MiniMax-Text-01 / MiniMax-M2",
+      "size": "230B-456B",
+      "reason": "two orders of magnitude beyond this machine's budget"
+    },
+    {
+      "model": "GLM-4.7-Flash",
+      "size": "11.3 GB (Q2_K) upwards",
+      "reason": "exceeds the RAM budget at every available quantisation"
+    },
+    {
+      "model": "Qwen2.5-Coder-7B / Qwen3-4B",
+      "size": "4.7-2.6 GB",
+      "reason": "Qwen2.5-Coder-7B fits only with heavy CPU offload; the 1.5B and 4B variants already cover the family's behaviour curve"
+    }
+  ],
+  "scenarios": [
+    "write_a_helper"
+  ],
+  "strategies": [
+    "single"
+  ],
+  "trials_per_combination": 1,
+  "server_stats": [
+    {
+      "model": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "gpu_layers": 999,
+      "load_seconds": 2.01,
+      "size_mb": 1129
+    },
+    {
+      "model": "qwen3-1.7b",
+      "family": "Qwen",
+      "gpu_layers": 999,
+      "load_seconds": 6.02,
+      "size_mb": 1110
+    },
+    {
+      "model": "deepseek-r1-distill-qwen-1.5b",
+      "family": "DeepSeek",
+      "gpu_layers": 999,
+      "load_seconds": 6.01,
+      "size_mb": 1117
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "family": "Gemma",
+      "gpu_layers": 999,
+      "load_seconds": 8.02,
+      "size_mb": 819
+    },
+    {
+      "model": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "gpu_layers": 999,
+      "load_seconds": 4.01,
+      "size_mb": 808
+    },
+    {
+      "model": "phi-4-mini-instruct",
+      "family": "Phi",
+      "gpu_layers": 99,
+      "load_seconds": 11.02,
+      "size_mb": 2409
+    },
+    {
+      "model": "minimax-m1-distill-qwen3-4b",
+      "family": "MiniMax",
+      "gpu_layers": 999,
+      "load_seconds": 8.02,
+      "size_mb": 2497
+    },
+    {
+      "model": "kimi-k3-distill-qwen3.5-9b",
+      "family": "Kimi",
+      "gpu_layers": 215,
+      "load_seconds": 18.07,
+      "size_mb": 5780
+    }
+  ],
+  "trials": [
+    {
+      "model": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733HXA50WT22",
+      "status": "succeeded",
+      "verified": true,
+      "tokens_used": 8825,
+      "wall_clock_s": 42.413,
+      "model_calls": 3,
+      "tool_calls": 4,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": null,
+      "notes": []
+    },
+    {
+      "model": "qwen3-1.7b",
+      "family": "Qwen",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733KCYT069TE",
+      "status": "completed_with_failures",
+      "verified": false,
+      "tokens_used": 3183,
+      "wall_clock_s": 23.294,
+      "model_calls": 4,
+      "tool_calls": 2,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": null,
+      "notes": []
+    },
+    {
+      "model": "deepseek-r1-distill-qwen-1.5b",
+      "family": "DeepSeek",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733MA1G062HX",
+      "status": "completed_with_failures",
+      "verified": false,
+      "tokens_used": 1035,
+      "wall_clock_s": 14.298,
+      "model_calls": 2,
+      "tool_calls": 0,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": null,
+      "notes": []
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "family": "Gemma",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733N06Z0SM2E",
+      "status": "error",
+      "verified": false,
+      "tokens_used": 0,
+      "wall_clock_s": 5.168,
+      "model_calls": 0,
+      "tool_calls": 0,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": "1 validation error for TaskSpec\n  Value error, task defines-greet has duplicate acceptance criterion ids [type=value_error, input_value={'id': 'defines-greet', '...s=None, max_attempts=3)}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error",
+      "notes": []
+    },
+    {
+      "model": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733N9NX07HVJ",
+      "status": "completed_with_failures",
+      "verified": false,
+      "tokens_used": 1253,
+      "wall_clock_s": 2.263,
+      "model_calls": 1,
+      "tool_calls": 1,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": null,
+      "notes": []
+    },
+    {
+      "model": "phi-4-mini-instruct",
+      "family": "Phi",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733NPY30ND62",
+      "status": "completed_with_failures",
+      "verified": false,
+      "tokens_used": 709,
+      "wall_clock_s": 8.486,
+      "model_calls": 2,
+      "tool_calls": 0,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": null,
+      "notes": []
+    },
+    {
+      "model": "minimax-m1-distill-qwen3-4b",
+      "family": "MiniMax",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733P7KA0A14X",
+      "status": "error",
+      "verified": false,
+      "tokens_used": 0,
+      "wall_clock_s": 40.909,
+      "model_calls": 0,
+      "tool_calls": 0,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": "planner response failed validation: 1 validation error for LLMPlan\ntasks.1.acceptance_criteria.0\n  Value error, acceptance criterion 'pytest-exits-zero' of kind pytest_selector is missing spec keys: ['selector'] [type=value_error, input_value={'id': 'pytest-exits-zero...reeter.py::test_greet'}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error",
+      "notes": []
+    },
+    {
+      "model": "kimi-k3-distill-qwen3.5-9b",
+      "family": "Kimi",
+      "scenario_id": "write_a_helper",
+      "strategy": "single",
+      "workers": 1,
+      "trial": 0,
+      "run_id": "run_01M733R20V0NT9V",
+      "status": "error",
+      "verified": false,
+      "tokens_used": 0,
+      "wall_clock_s": 115.014,
+      "model_calls": 0,
+      "tool_calls": 0,
+      "tool_call_parse_failures": 0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "error": "planner response failed validation: 2 validation errors for LLMPlan\ntasks.0.acceptance_criteria.0\n  Value error, acceptance criterion 'ls-root' needs a non-empty command list [type=value_error, input_value={'id': 'ls-root', 'descri...d-local-43zdiqah/repo'}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error\ntasks.2.acceptance_criteria.0\n  Value error, acceptance criterion 'pytest-pass' needs a non-empty command list [type=value_error, input_value=",
+      "notes": []
+    }
+  ],
+  "aggregates": {
+    "deepseek-r1-distill-qwen-1.5b": {
+      "family": "DeepSeek",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 14.298,
+      "mean_tokens": 1035.0,
+      "mean_model_calls": 2.0,
+      "mean_tool_calls": 0.0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": []
+    },
+    "gemma-3-1b-it": {
+      "family": "Gemma",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 5.168,
+      "mean_tokens": 0.0,
+      "mean_model_calls": 0.0,
+      "mean_tool_calls": 0.0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": [
+        "1 validation error for TaskSpec\n  Value error, task defines-greet has duplicate acceptance criterion ids [type=value_error, input_value={'id': 'defines-greet', '...s=None, max_attempts=3)}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error"
+      ]
+    },
+    "kimi-k3-distill-qwen3.5-9b": {
+      "family": "Kimi",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 115.014,
+      "mean_tokens": 0.0,
+      "mean_model_calls": 0.0,
+      "mean_tool_calls": 0.0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": [
+        "planner response failed validation: 2 validation errors for LLMPlan\ntasks.0.acceptance_criteria.0\n  Value error, acceptance criterion 'ls-root' needs a non-empty command list [type=value_error, input_value={'id': 'ls-root', 'descri...d-local-43zdiqah/repo'}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error\ntasks.2.acceptance_criteria.0\n  Value error, acceptance criterion 'pytest-pass' needs a non-empty command list [type=value_error, input_value="
+      ]
+    },
+    "llama-3.2-1b-instruct": {
+      "family": "Llama",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 2.263,
+      "mean_tokens": 1253.0,
+      "mean_model_calls": 1.0,
+      "mean_tool_calls": 1.0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": []
+    },
+    "minimax-m1-distill-qwen3-4b": {
+      "family": "MiniMax",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 40.909,
+      "mean_tokens": 0.0,
+      "mean_model_calls": 0.0,
+      "mean_tool_calls": 0.0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": [
+        "planner response failed validation: 1 validation error for LLMPlan\ntasks.1.acceptance_criteria.0\n  Value error, acceptance criterion 'pytest-exits-zero' of kind pytest_selector is missing spec keys: ['selector'] [type=value_error, input_value={'id': 'pytest-exits-zero...reeter.py::test_greet'}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error"
+      ]
+    },
+    "phi-4-mini-instruct": {
+      "family": "Phi",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 8.486,
+      "mean_tokens": 709.0,
+      "mean_model_calls": 2.0,
+      "mean_tool_calls": 0.0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": []
+    },
+    "qwen2.5-coder-1.5b-instruct": {
+      "family": "Qwen",
+      "runs": 1,
+      "verified_runs": 1,
+      "verified_rate": 1.0,
+      "mean_wall_clock_s": 42.413,
+      "mean_tokens": 8825.0,
+      "mean_model_calls": 3.0,
+      "mean_tool_calls": 4.0,
+      "verification_failures": 0,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": []
+    },
+    "qwen3-1.7b": {
+      "family": "Qwen",
+      "runs": 1,
+      "verified_runs": 0,
+      "verified_rate": 0.0,
+      "mean_wall_clock_s": 23.294,
+      "mean_tokens": 3183.0,
+      "mean_model_calls": 4.0,
+      "mean_tool_calls": 2.0,
+      "verification_failures": 2,
+      "salvaged_tool_calls": 0,
+      "protected_action_requests": 0,
+      "errors": []
+    }
+  },
+  "notes": [
+    "The provider is a real, locally served model; the tool loop, the policy engine and the verification gate are the production ones.",
+    "The mock provider's `edits` affordance is deliberately absent here: a real model must call write_file itself, which is the capability being measured.",
+    "Cost is zero because the models are local; the token counts are the real, provider-reported ones."
+  ]
+}

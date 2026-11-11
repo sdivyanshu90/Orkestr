@@ -278,3 +278,28 @@ The raw output of the published run is in
 deterministic, the token counts, tool counts, conflict counts and retry
 counts reproduce exactly; wall-clock times do not, and should not be expected
 to.
+
+<!-- local-model-metrics:start -->
+## Local models on RTX 3050 and CPU
+
+Measured on 2026-11-10: eight Q4_K_M checkpoints, 62 completed agent-workflow trials and 2 user-requested cancellations, 40 fixed-score GPU requests, and five CPU-baseline requests. Hardware: RTX 3050 Laptop (4 GiB VRAM), six CPU threads and 8.7 GiB RAM. Serving: CUDA llama.cpp.
+
+| Checkpoint | Runtime gate / completed | Fixed GPU tasks / 5 | Mean GPU response s |
+|---|---:|---:|---:|
+| `qwen2.5-coder-1.5b-instruct` | 4 / 8 | 2 / 5 | 0.310 |
+| `qwen3-1.7b` | 1 / 8 | 4 / 5 | 0.694 |
+| `deepseek-r1-distill-qwen-1.5b` | 2 / 8 | 1 / 5 | 2.155 |
+| `gemma-3-1b-it` | 2 / 8 | 2 / 5 | 0.301 |
+| `llama-3.2-1b-instruct` | 0 / 8 | 3 / 5 | 0.228 |
+| `phi-4-mini-instruct` | 7 / 8 | 2 / 5 | 0.481 |
+| `minimax-m1-distill-qwen3-4b` | 0 / 8 | 2 / 5 | 3.640 |
+| `kimi-k3-distill-qwen3.5-9b` | 0 / 6 | 4 / 5 | 33.841 |
+
+Qwen2.5-Coder CPU baseline: **2 / 5** fixed tasks passed, **1.770 s** mean response time. Direct requests use one foreground configuration, one request slot, 4096 context tokens, temperature zero, seed 42, and a 256-token output cap after an untimed warmup.
+
+**Interpretation:** runtime-gate flags use model-generated plans and criteria, so they do not establish the correctness of the original requested code. User-requested cancellations are excluded from the denominators. 11 runtime passes recorded no worker tool calls. Fixed tasks use independent checks, but five tiny tasks with one trial each do not establish general model rankings. Response latencies include differing output lengths and possible contention from a residual server found and stopped during final cleanup; they are not fully isolated hardware comparisons. MiniMax and Kimi entries are third-party Qwen-based distillations, not official vendor checkpoints.
+
+Detailed metrics: [agent-workflow results](local-benchmark-results.md), [fixed-score inference and CPU results](local-inference-results.md), and [local methodology](local-benchmark-methodology.md). Raw JSON, per-request responses, hashes, server logs and telemetry are under `benchmarks/results/`.
+
+**Cleanup verified:** 19,011,685,088 bytes of benchmark-owned model caches and inference-runtime downloads were removed. [Deletion receipt](../benchmarks/results/local-cleanup.json).
+<!-- local-model-metrics:end -->

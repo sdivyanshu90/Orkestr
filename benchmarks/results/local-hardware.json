@@ -1,0 +1,266 @@
+{
+  "captured_at": 1794330807.5570712,
+  "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 6,
+  "cpuinfo": "processor\t: 0\nvendor_id\t: AuthenticAMD\ncpu family\t: 25\nmodel\t\t: 117\nmodel name\t: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics\nstepping\t: 2\nmicrocode\t: 0xffffffff\ncpu MHz\t\t: 3792.917\ncache size\t: 1024 KB\nphysical id\t: 0\nsiblings\t: 6\ncore id\t\t: 0\ncpu cores\t: 3\napicid\t\t: 0\ninitial apicid\t: 0\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 13\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext perfctr_core ssbd ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx512_bf16 clzero xsaveerptr arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm\nbugs\t\t: sysret_ss_attrs null_seg spectre_v1 spectre_v2 spec_store_bypass srso spectre_v2_user tsa\nbogomips\t: 7585.83\nTLB size\t: 3584 4K pages\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:",
+  "meminfo": "MemTotal:        9154660 kB\nMemFree:           77144 kB\nMemAvailable:    5364592 kB\nBuffers:          536820 kB\nCached:          5081456 kB\nSwapCached:        43992 kB\nActive:          4517556 kB\nInactive:        4113440 kB\nActive(anon):     376696 kB\nInactive(anon):  2878516 kB\nActive(file):    4140860 kB\nInactive(file):  1234924 kB\nUnevictable:           0 kB\nMlocked:               0 kB\nSwapTotal:       4194304 kB\nSwapFree:        3639688 kB\nDirty:               676 kB\nWriteback:             0 kB\nAnonPages:       3004292 kB\nMapped:           974940 kB\nShmem:            242512 kB\nKReclaimable:     111952 kB\nSlab:             188092 kB\nSReclaimable:     111952 kB\nSUnreclaim:        76140 kB\nKernelStack:        7040 kB\nPageTables:        25376 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:     8771632 kB\nCommitted_AS:    5866356 kB\nVmallocTotal:   34359738367 kB\nVmallocUsed:       35432 kB\nVmallocChunk:          0 kB\nPercpu:             3520 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:         0 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:   1034240 kB\nFilePmdMapped:    124928 kB\nBalloon:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\nDirectMap4k:       58368 kB\nDirectMap2M:     5183488 kB\nDirectMap1G:    13631488 kB\n",
+  "models": [
+    {
+      "id": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "repo": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.5B",
+      "size_mb": 1129,
+      "note": "code-specialised; the reference small model for this benchmark",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+    },
+    {
+      "id": "qwen3-1.7b",
+      "family": "Qwen",
+      "repo": "unsloth/Qwen3-1.7B-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.7B",
+      "size_mb": 1110,
+      "note": "newer generation with a hybrid reasoning mode",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-1.5b",
+      "family": "DeepSeek",
+      "repo": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1.5B",
+      "size_mb": 1117,
+      "note": "chain-of-thought distillation; emits long reasoning traces",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+    },
+    {
+      "id": "gemma-3-1b-it",
+      "family": "Gemma",
+      "repo": "ggml-org/gemma-3-1b-it-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1B",
+      "size_mb": 819,
+      "note": "smallest model in the set; a useful lower bound",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf"
+    },
+    {
+      "id": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "repo": "unsloth/Llama-3.2-1B-Instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "1B",
+      "size_mb": 808,
+      "note": "reference small Llama",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+    },
+    {
+      "id": "phi-4-mini-instruct",
+      "family": "Phi",
+      "repo": "unsloth/Phi-4-mini-instruct-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "3.8B",
+      "size_mb": 2409,
+      "note": "largest model in the set; tests the GPU-offload path",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf"
+    },
+    {
+      "id": "minimax-m1-distill-qwen3-4b",
+      "family": "MiniMax",
+      "repo": "mradermacher/Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "4B",
+      "size_mb": 2497,
+      "note": "the smallest available MiniMax-family artefact; MiniMax-M1 and MiniMax-Text-01 are 456B and do not fit this machine",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/mradermacher/Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored-GGUF/resolve/main/Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored.Q4_K_M.gguf"
+    },
+    {
+      "id": "kimi-k3-distill-qwen3.5-9b",
+      "family": "Kimi",
+      "repo": "mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF",
+      "quant": "Q4_K_M",
+      "parameters": "9B",
+      "size_mb": 5780,
+      "note": "the smallest available Kimi-family artefact; the official Kimi-K3 is 48 GB per shard and does not fit this machine",
+      "tool_capable": true,
+      "download_url": "https://huggingface.co/mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF/resolve/main/Qwen3.5-9B-Kimi-k3-Distilled.Q4_K_M.gguf"
+    }
+  ],
+  "downloaded_weights": [
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/localmodels/qwen2.5-coder-1.5b-q4_k_m.gguf",
+      "bytes": 1117320768,
+      "sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+      "gguf_version": 3,
+      "tensor_count": 339,
+      "metadata": {
+        "general.architecture": "qwen2",
+        "general.name": "Qwen2.5 Coder 1.5B Instruct GGUF",
+        "qwen2.block_count": 28,
+        "qwen2.context_length": 32768,
+        "qwen2.attention.head_count": 12,
+        "qwen2.attention.head_count_kv": 2,
+        "general.file_type": 15,
+        "general.quantization_version": 2
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/deepseek-r1-distill-qwen-1.5b.gguf",
+      "bytes": 1117321312,
+      "sha256": "f3bdf9cf31dee4b57ae4e455a1cb0d01b5c2c1b50d72d3112141c195506c2840",
+      "gguf_version": 3,
+      "tensor_count": 339,
+      "metadata": {
+        "general.architecture": "qwen2",
+        "general.name": "Deepseek-R1-Distill-Qwen-1.5B",
+        "qwen2.block_count": 28,
+        "qwen2.context_length": 131072,
+        "qwen2.attention.head_count": 12,
+        "qwen2.attention.head_count_kv": 2,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/gemma-3-1b-it.gguf",
+      "bytes": 806058240,
+      "sha256": "8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135",
+      "gguf_version": 3,
+      "tensor_count": 340,
+      "metadata": {
+        "general.architecture": "gemma3",
+        "general.name": "Gemma 3 1b It",
+        "gemma3.context_length": 32768,
+        "gemma3.block_count": 26,
+        "gemma3.attention.head_count": 4,
+        "gemma3.attention.head_count_kv": 1,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/kimi-k3-distill-qwen3.5-9b.gguf",
+      "bytes": 5780091776,
+      "sha256": "ff0649d92045b564daf4e0b9b0e6b21c6b83b2b1b59448554cf778ad206695f7",
+      "gguf_version": 3,
+      "tensor_count": 442,
+      "metadata": {
+        "general.architecture": "qwen35",
+        "general.name": "Qwen3.5 9B Kimi K3 Distilled",
+        "qwen35.block_count": 33,
+        "qwen35.context_length": 262144,
+        "qwen35.attention.head_count": 16,
+        "qwen35.attention.head_count_kv": 4,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/llama-3.2-1b-instruct.gguf",
+      "bytes": 807694368,
+      "sha256": "3f5a22426976ab26cfe84dba63c1d08391717abb1af893e10f1b2968d862dcc1",
+      "gguf_version": 3,
+      "tensor_count": 147,
+      "metadata": {
+        "general.architecture": "llama",
+        "general.name": "Llama-3.2-1B-Instruct",
+        "llama.block_count": 16,
+        "llama.context_length": 131072,
+        "llama.attention.head_count": 32,
+        "llama.attention.head_count_kv": 8,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/minimax-m1-distill-qwen3-4b.gguf",
+      "bytes": 2497281312,
+      "sha256": "75eb8f51eaa98c39d91adc89f6f1c231beb8f7a0790d77afcedf51768ee81a18",
+      "gguf_version": 3,
+      "tensor_count": 398,
+      "metadata": {
+        "general.architecture": "qwen3",
+        "general.name": "Qwen3 4B 2507 Thinking Minimax M1 Distill Uncensored",
+        "qwen3.block_count": 36,
+        "qwen3.context_length": 262144,
+        "qwen3.attention.head_count": 32,
+        "qwen3.attention.head_count_kv": 8,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/phi-4-mini-instruct.gguf",
+      "bytes": 2491874272,
+      "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
+      "gguf_version": 3,
+      "tensor_count": 196,
+      "metadata": {
+        "general.architecture": "phi3",
+        "general.name": "Phi 4 Mini Instruct",
+        "phi3.context_length": 131072,
+        "phi3.block_count": 32,
+        "phi3.attention.head_count": 24,
+        "phi3.attention.head_count_kv": 8,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/qwen2.5-coder-1.5b-instruct.gguf",
+      "bytes": 1117320768,
+      "sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+      "gguf_version": 3,
+      "tensor_count": 339,
+      "metadata": {
+        "general.architecture": "qwen2",
+        "general.name": "Qwen2.5 Coder 1.5B Instruct GGUF",
+        "qwen2.block_count": 28,
+        "qwen2.context_length": 32768,
+        "qwen2.attention.head_count": 12,
+        "qwen2.attention.head_count_kv": 2,
+        "general.file_type": 15,
+        "general.quantization_version": 2
+      }
+    },
+    {
+      "path": "/home/somu/.cache/agent-squad-benchmark/models/qwen3-1.7b.gguf",
+      "bytes": 1107409472,
+      "sha256": "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897",
+      "gguf_version": 3,
+      "tensor_count": 310,
+      "metadata": {
+        "general.architecture": "qwen3",
+        "general.name": "Qwen3-1.7B",
+        "qwen3.block_count": 28,
+        "qwen3.context_length": 40960,
+        "qwen3.attention.head_count": 16,
+        "qwen3.attention.head_count_kv": 8,
+        "general.quantization_version": 2,
+        "general.file_type": 15
+      }
+    }
+  ],
+  "server_path": "/home/somu/.cache/agent-squad-benchmark/llamacpp/llama-b12246/llama-server",
+  "server_sha256": "573dfeee866d98cbfb1ce208c21d5c23b5ac48fbfaf0d047b3312b07e10cf990",
+  "gpu_sample": {
+    "name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "total_vram_mib": 4096,
+    "used_vram_mib": 3841,
+    "utilization_percent": 12,
+    "temperature_c": 67,
+    "sample_utc": "2026-11-10 17:11:38 UTC"
+  },
+  "limitations": [
+    "Source URLs use mutable main revisions; hashes identify this run precisely.",
+    "GPU sample was captured during the concurrent orchestration sweep."
+  ]
+}

@@ -1,177 +1,165 @@
-# Local-model benchmark: methodology
+# Local-model benchmark methodology
 
-The deterministic benchmark in
-[`docs/benchmark-methodology.md`](benchmark-methodology.md) measures the
-*orchestration*.  It cannot measure whether a real model can drive the agent
-loop at all, because the mock provider emits perfectly formed tool calls
-and never fails on content.
+This experiment runs real local GGUF models through Orkestr's production
+OpenAI-compatible provider, LLM planner, worker tool loop, policy engine and
+verification gate. It measures compatibility with this bounded agent workflow.
+It does not establish general model quality or coding accuracy.
 
-This document describes the complementary experiment: the same orchestrator,
-the same policy engine, the same verification gate and the same integration
-boundary, driven by **eight real, locally served models**.
+## Hardware and serving
 
----
+The development host exposes six CPU threads, 8.7 GiB RAM, 4 GiB swap and an
+NVIDIA RTX 3050 Laptop GPU with 4096 MiB VRAM. Models are served with the
+existing CUDA llama.cpp `llama-server` build b12246. No hosted inference API
+is used. Some GGUF conversions come from Unsloth; Unsloth training is not used.
 
-## 1. The question this experiment answers
+Eight distinct model checkpoints were downloaded at Q4_K_M:
 
-> Which local models can actually drive a bounded agent loop — producing
-> tool calls, making the right file changes, and passing independent
-> verification — and what does each one cost in tokens and tool calls?
+| Local ID | Parameters | GGUF source repository |
+|---|---:|---|
+| qwen2.5-coder-1.5b-instruct | 1.5B | Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF |
+| qwen3-1.7b | 1.7B | unsloth/Qwen3-1.7B-GGUF |
+| deepseek-r1-distill-qwen-1.5b | 1.5B | unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF |
+| gemma-3-1b-it | 1B | ggml-org/gemma-3-1b-it-GGUF |
+| llama-3.2-1b-instruct | 1B | unsloth/Llama-3.2-1B-Instruct-GGUF |
+| phi-4-mini-instruct | 3.8B | unsloth/Phi-4-mini-instruct-GGUF |
+| minimax-m1-distill-qwen3-4b | 4B | mradermacher/Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored-GGUF |
+| kimi-k3-distill-qwen3.5-9b | 9B | mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF |
 
-It is deliberately *not* a claim about model quality in general. These are
-1–9 billion parameter models on a laptop; the interesting result is that
-**the orchestration behaves differently with real models than with the mock**,
-and that three specific mechanisms turn out to be necessary.
+These IDs and parameter labels come from the existing model catalog and the
+selected artifacts. The MiniMax and Kimi entries are **third-party Qwen-based
+distillations**, not official MiniMax or Moonshot checkpoints. Repository names
+do not independently verify training provenance or teacher quality. The selected
+set represents distinct checkpoints, not eight independent base architectures.
 
----
+The runtime chooses a requested GPU-layer count from free VRAM and model size.
+That count is an estimate, not the number actually offloaded: for example,
+`999` means request all layers. The estimate can exceed the model's layer count.
+Large models may use system or shared memory; do not infer placement from this
+flag alone. GPU telemetry and server logs are retained with the results.
 
-## 2. Hardware, and what it rules out
+## Workload
 
-| Resource | Value |
-|---|---|
-| CPU | 6 vCPU (AMD Ryzen 7 8845HS) |
-| RAM | 8 GB total, ~7 GB available |
-| GPU | NVIDIA RTX 3050 Laptop, **4 GB VRAM** |
-| Disk | 881 GB free (host filesystem) |
+The sweep uses four synthetic scenarios, each with `single` and `static_two`
+strategies, one trial per combination: **8 models × 4 scenarios × 2 strategies
+= 64 planned trials**. The measured run completed **62 trials**; after the
+user requested faster completion, two remaining Kimi workflow trials were
+cancelled. Cancellations are retained in raw records but excluded from rates
+and averages. All eight checkpoints complete the separate fixed-score probes.
 
-Two consequences follow, and both are recorded rather than glossed over.
+`static_two` configures at most two workers; dependencies or the model's
+chosen plan may leave only one runnable task.
 
-**The flagships do not fit.** Measured sizes:
-
-| Model | Smallest available quantisation | Fits? |
+| Scenario | Requested work | Criteria supplied in the request |
 |---|---|---|
-| Kimi-K3 | ~48 GB *per shard* (≈750 GB total) | No |
-| Kimi-K2 / K2.5 / Kimi-Linear-48B-A3B | 10.9 GB (IQ1_M) | No — exceeds 8 GB RAM |
-| MiniMax-M1 / MiniMax-Text-01 / MiniMax-M2 | 230B–456B | No |
-| GLM-4.7-Flash | 11.3 GB (Q2_K) | No |
-| Qwen2.5-Coder-7B | 4.7 GB | Only with heavy CPU offload |
+| write_a_helper | Write a greet function | File exists and contains `def greet` |
+| write_a_test | Test the existing calculator | File exists and selected pytest passes |
+| two_independent_files | Write alpha and beta modules | Both files exist |
+| dependent_chain | Write square, then test it | Module exists and selected pytest passes |
 
-`EXCLUDED_MODELS` in `src/agent_squad/benchmark/local.py` records every
-exclusion with its size and the reason, so the exclusion is auditable
-rather than implicit.
+The production LLM planner consumes these requests and can change the tasks,
+dependencies and criteria. A result marked verified means the runtime reported
+`succeeded` with at least one successful task. It does **not** mean the output
+passed an immutable external test suite. File-presence criteria do not establish
+functional correctness. Some baseline fixture tests can pass without new work.
+Integration is disabled (`integrate=False`), so no merge outcome is measured.
 
-**The smallest available artefact from each family is used instead.** For
-Kimi and MiniMax that means a *third-party distillation* rather than the
-flagship: `Qwen3.5-9B-Kimi-k3-Distilled` and
-`Qwen3-4B-2507-Thinking-Minimax-M1-Distill`. That is a real limitation of
-this experiment, and it is stated on the model entry itself.
+Worker calls are capped at 512 output tokens with six iterations per role.
+The planner has its own configured output budget. Retry settings allow two
+attempts, and unattended protected actions have a ten-second approval timeout.
+No mock-provider `edits` are supplied; models must generate their own tool calls.
+The production adapter can recover supported JSON tool calls from assistant text;
+the harness records the number recovered.
 
----
+## Concurrency and limits
 
-## 3. The model set
+The measured sweep serves two models concurrently and permits three scenario
+runs concurrently across the suite. Small models have eight server slots with
+3072 tokens per slot; medium models have six, and the largest has three.
+Each trial also sets provider `max_concurrency=1`, so two workers in a trial
+can overlap tool activity but their model requests are serialized.
+This is a constrained configuration: longer conversations can exceed 3072 tokens.
+Such failures count against workflow compatibility under these settings and
+must not be interpreted as proof that the model cannot solve the task.
 
-Eight models, seven families, all GGUF at Q4_K_M from the Unsloth, Qwen,
-ggml-org and bartowski conversions.
+Wall-clock times include GPU contention and orchestration, and cannot rank model
+inference speed. Concurrency, different generated plans, sampling and context
+failures can also affect success rates and token counts. One trial provides no
+estimate of variance. Within-model strategy comparisons are descriptive, not a
+controlled causal test of parallelism.
 
-| Model | Family | Parameters | Size | GPU layers |
-|---|---|---:|---:|---:|
-| `qwen2.5-coder-1.5b-instruct` | Qwen | 1.5 B | 1.13 GB | all |
-| `qwen3-1.7b` | Qwen | 1.7 B | 1.11 GB | all |
-| `deepseek-r1-distill-qwen-1.5b` | DeepSeek | 1.5 B | 1.12 GB | all |
-| `gemma-3-1b-it` | Gemma | 1 B | 0.82 GB | all |
-| `llama-3.2-1b-instruct` | Llama | 1 B | 0.81 GB | all |
-| `phi-4-mini-instruct` | Phi | 3.8 B | 2.41 GB | partial |
-| `minimax-m1-distill-qwen3-4b` | MiniMax | 4 B | 2.50 GB | partial |
-| `kimi-k3-distill-qwen3.5-9b` | Kimi | 9 B | 5.78 GB | partial |
+## Metrics and accounting caveats
 
-**GPU layer planning.** `plan_gpu_layers` divides the free VRAM (85 % of
-it) between the models being served concurrently, then places as many
-layers on the GPU as fit, leaving the remainder on the CPU. The chosen
-layer count is recorded per model in the report's `server_stats`.
+The raw records include status, verified flag, elapsed wall time, provider-reported
+worker tokens, runtime worker model-call and tool-call events, verification failures, recovered
+tool calls and protected-action requests. Token usage is summed from reported
+usage in the successful outcome path; it is not an independent tokenizer count.
+Planner calls are not emitted as `MODEL_CALL` events, and planner token usage is
+not included in the scheduler summary. The tables therefore undercount total
+inference work even for runs that return normally.
 
----
+When a run raises, the current harness leaves tokens and most event counters at
+zero even if inference already occurred. Treat these as **unavailable accounting**.
+The `tool_call_parse_failures` field is always initialized to zero and is not a
+measured metric. Zero API cost means no hosted inference bill; electricity and
+hardware costs are excluded. Server `size_mb` comes from catalog metadata;
+actual downloaded byte sizes are recorded separately in the hardware manifest.
 
-## 4. The serving stack
-
-`llama.cpp`'s `llama-server` (build b12246, CUDA 13.5), which exposes an
-OpenAI-compatible `/v1/chat/completions` endpoint. This means the adapter
-under test is the *same* `openai_compat` provider used against a hosted
-API — the experiment exercises the production code path, not a special
-local-only shim.
-
-Each model is served once; all of that model's runs reuse the loaded
-weights.
-
----
-
-## 5. What is measured
-
-| Metric | Definition |
-|---|---|
-| **Verified rate** | Runs in which the task was completed *and* passed independent verification |
-| Model calls | Requests issued to the provider |
-| Tool calls | Tool invocations that reached the tool layer |
-| Salvaged calls | Tool calls recovered from the assistant's *text* rather than the structured channel |
-| Protected-action requests | Times the model asked for an action needing human approval |
-| Verification failures | Gate runs that rejected the work |
-| Tokens | Provider-reported usage |
-| Wall-clock | Secondary; see §7 |
-
----
-
-## 6. What is deliberately different from the mock benchmark
-
-The local scenarios omit the mock provider's `edits` affordance. In the
-deterministic benchmark, the brief carries the file content and the mock
-writes it. Here, the brief carries only the *objective*, and the model has
-to call `write_file` itself with the content it invents.
-
-That is the whole point: it measures whether a model can drive the tool
-loop, not whether the orchestrator can move bytes.
-
----
-
-## 7. Concurrency, and what it invalidates
-
-Models are served concurrently (default 3) and a model's scenarios run
-concurrently (default 2). This cuts the sweep from roughly an hour to
-roughly a quarter of an hour.
-
-The consequence is stated in the report itself: **wall-clock times are not
-comparable between models**, because a model served alongside two others
-sees different contention from one served alone. The *verified rate*, the
-token counts and the tool-call counts are unaffected — they are properties
-of the model, not of the machine's load.
-
-Within a model, every strategy sees the same contention, so the
-single-versus-multi comparison inside a model remains fair.
-
----
-
-## 8. Reproducing
+## Reproduction and artifacts
 
 ```bash
-# One model, one scenario
-agent-squad benchmark --local \
-    --local-models qwen2.5-coder-1.5b-instruct \
-    --local-scenarios write_a_helper \
-    --local-strategies single --trials 1 --json
+.venv/bin/agent-squad benchmark --local \
+  --local-scenarios write_a_helper,write_a_test,two_independent_files,dependent_chain \
+  --local-strategies single,static_two \
+  --local-parallel-models 2 --local-parallel-runs 3 \
+  --local-progress benchmarks/results/local-sweep.jsonl \
+  --trials 1 --json > benchmarks/results/local-sweep.json
 
-# The full sweep
-agent-squad benchmark --local \
-    --local-scenarios write_a_helper,write_a_test,two_independent_files,dependent_chain \
-    --local-strategies single,static_two \
-    --local-parallel-models 3 --local-parallel-runs 2 \
-    --trials 1 --json > sweep.json
+.venv/bin/python scripts/render_local_results.py \
+  benchmarks/results/local-sweep.jsonl \
+  --output docs/local-benchmark-results.md
 ```
 
-The weights live in `~/.cache/agent-squad-benchmark/models` and the server
-binary in `~/.cache/agent-squad-benchmark/llamacpp`; both paths are
-overridable with `AGENT_SQUAD_LOCAL_MODELS` and `AGENT_SQUAD_LLAMA_SERVER`.
+The server binary must exist at `AGENT_SQUAD_LLAMA_SERVER` or the default cache
+path, and `AGENT_SQUAD_LOCAL_MODELS` can override the model directory. Reproduction
+requires downloading the weights again because the measured run's model weights
+are removed afterward. Raw results, logs, hardware metadata and cleanup evidence
+are retained under `benchmarks/results/`.
 
----
+## Fixed-score companion probes
 
-## 9. Known limitations of this experiment
+A second experiment in `scripts/benchmark_local_inference.py` runs after the
+foreground agent sweep stops. It sends the same five short prompts directly to
+each of the eight models, then repeats them on Qwen2.5-Coder with GPU offload
+disabled. Its scoring rules and expected outputs are fixed in the script rather
+than generated by the model. Arithmetic, extraction and sorting use exact JSON
+equality. The Python square function must pass restricted AST validation and
+four concrete input checks. The tool task requires exactly one structured call
+with the expected name and arguments.
 
-1. **The models are small.** Nothing here predicts the behaviour of a
-   frontier model.
-2. **The Kimi and MiniMax entries are third-party distillations**, not the
-   vendors' own weights.
-3. **One trial per combination.** Wall-clock variance on a laptop is large;
-   the verified rate is deterministic enough at this size, but a claim about
-   small differences in it would need more trials.
-4. **The scenarios are small and synthetic.** They exercise the loop, not
-   software engineering.
-5. **The benchmark is not a model leaderboard.** It measures *orchestration
-   compatibility* under this runtime's prompt, tool set and iteration
-   budget — a different prompt would produce a different ranking.
+All configurations use temperature zero, seed 42, a 256-token output cap, one
+request slot and 4096 context tokens. Each receives an untimed 16-token warmup.
+Only complete leading reasoning tags and surrounding JSON code fences are
+stripped before scoring. Exhausting the token cap without a final answer fails.
+Model loading is excluded from per-request latency. GPU placement is full
+offload for smaller models and 12 requested layers for the largest checkpoint.
+The CPU baseline requests zero GPU layers. Per-second GPU telemetry and verbose
+server logs are saved. These are five smoke tasks with one trial each, not a
+statistically powered leaderboard. Results are in
+[`local-inference-results.md`](local-inference-results.md).
+
+```bash
+.venv/bin/python scripts/benchmark_local_inference.py
+.venv/bin/python scripts/render_local_inference.py
+```
+
+## Residual-process timing limitation
+
+Final cleanup found and stopped one residual llama-server process from the
+interrupted workflow sweep (PID 270787, recorded in the deletion receipt).
+The companion probes ran one foreground configuration and one benchmark request
+at a time, but were not fully isolated from background model resources. GPU and
+host-memory pressure may have affected latency and throughput. Their fixed
+task scores remain directly auditable from the saved responses; timing results
+are observational and must not be presented as clean GPU/CPU hardware rankings.
+The CPU baseline requested zero offloaded layers; that does not imply the GPU
+was otherwise idle. No model servers remain after cleanup.

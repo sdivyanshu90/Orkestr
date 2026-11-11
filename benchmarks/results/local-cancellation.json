@@ -1,0 +1,19 @@
+{
+  "requested_reason": "User: Speed it up.",
+  "benchmark_pid": null,
+  "finished_at": 1794334458.4860733,
+  "completed_trials": 62,
+  "cancelled_trials": 2,
+  "cancelled_keys": [
+    [
+      "kimi-k3-distill-qwen3.5-9b",
+      "two_independent_files",
+      "single"
+    ],
+    [
+      "kimi-k3-distill-qwen3.5-9b",
+      "dependent_chain",
+      "static_two"
+    ]
+  ]
+}

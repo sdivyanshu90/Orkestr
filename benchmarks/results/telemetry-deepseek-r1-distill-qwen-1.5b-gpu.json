@@ -1,0 +1,52 @@
+[
+  {
+    "time": 1794334539.9786074,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 5, 59",
+    "error": ""
+  },
+  {
+    "time": 1794334541.147795,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 81, 65",
+    "error": ""
+  },
+  {
+    "time": 1794334542.601308,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 86, 67",
+    "error": ""
+  },
+  {
+    "time": 1794334543.895973,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 88, 68",
+    "error": ""
+  },
+  {
+    "time": 1794334545.0519664,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 81, 69",
+    "error": ""
+  },
+  {
+    "time": 1794334546.2198894,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 88, 70",
+    "error": ""
+  },
+  {
+    "time": 1794334547.4574869,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 90, 68",
+    "error": ""
+  },
+  {
+    "time": 1794334548.546364,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 86, 71",
+    "error": ""
+  },
+  {
+    "time": 1794334549.9519298,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 88, 71",
+    "error": ""
+  },
+  {
+    "time": 1794334551.175255,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3255, 88, 72",
+    "error": ""
+  }
+]

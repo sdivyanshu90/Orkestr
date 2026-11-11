@@ -307,6 +307,9 @@ dashboard/               # optional React + React Flow web dashboard
 | [`docs/reliability.md`](docs/reliability.md) | Failure taxonomy, retry policy, durability, race analysis, known gaps |
 | [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md) | How the experiment is designed and what it can and cannot show |
 | [`docs/benchmark-results.md`](docs/benchmark-results.md) | Measured results, including negative results |
+| [`docs/local-benchmark-results.md`](docs/local-benchmark-results.md) | Eight real local checkpoints driving the agent workflow |
+| [`docs/local-inference-results.md`](docs/local-inference-results.md) | Fixed-score inference probes on RTX 3050 and a CPU baseline |
+| [`docs/local-benchmark-methodology.md`](docs/local-benchmark-methodology.md) | Local hardware, workload, scoring and measurement limits |
 | [`docs/improvement-audit.md`](docs/improvement-audit.md) | The gap analysis: what is missing, why it matters, what to do first |
 | [`docs/limitations.md`](docs/limitations.md) | What this system does not do |
 | [`docs/implementation-walkthrough.md`](docs/implementation-walkthrough.md) | A guided tour of the code, end to end |

@@ -1,0 +1,17 @@
+[
+  {
+    "time": 1794334634.878804,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3787, 5, 59",
+    "error": ""
+  },
+  {
+    "time": 1794334636.1719668,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3787, 48, 63",
+    "error": ""
+  },
+  {
+    "time": 1794334637.3738115,
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3787, 92, 64",
+    "error": ""
+  }
+]
