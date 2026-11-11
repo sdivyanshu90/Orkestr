@@ -99,9 +99,21 @@ found incomplete execution-path wiring for ownership and request accounting,
 partial deadline enforcement, and a private-HOME claim without actual isolation.
 The exact observations and closure requirements are in
 [the scoring policy's blocking examples](scoring-criteria.md#6-blocking-examples-from-the-2026-11-11-review).
-Treat these as release blockers to revalidate, not features completed by their
-commit titles. The review passed 365 tests with one capability-dependent skip;
-that run does not replace the required independent qualification evidence.
+
+Status of those six blockers, with the regression evidence that closes each
+one. A commit title is not evidence; the linked artifact is.
+
+| Blocker | Closure | Evidence |
+|---|---|---|
+| C1 — an output mismatch was accepted | The verdict uses the complete check result: exit code **and** every match predicate. A skipped or uncollected pytest selector now fails the check. | `tests/evaluation/test_adversarial_contracts.py`, `verification/checks.py` |
+| R3 — ownership defined but unwired | Acquisition, heartbeat, fencing and release run in `Orchestrator.run` and `recovery.resume_run`; a concurrent resume yields one owner. | `tests/recovery/test_authority_and_ownership.py` |
+| R4 — ledger without request-path integration | Every provider attempt records exactly one terminal record, and the run exposes the reconciled summary. | `tests/unit/test_provider_ledger.py`, `tests/integration/test_request_ledger.py` |
+| R1 — deadlines missed planning and verification | The deadline is a phase gate: every phase checks it, and blocking work is bounded by the remaining budget. | `tests/unit/test_deadline_phases.py`, `tests/integration/test_deadline_phases.py` |
+| S1 — a private-HOME claim without isolation | The environment no longer inherits `HOME`, and the hardened profile runs inside a bubblewrap boundary whose five properties are observed by a probe. | `tests/integration/test_hardened_containment.py` |
+| M1 — residual server in the timing sample | The historical sample is retained **with its caveat** and is not qualification evidence; `scripts/verify_local_timing.py` measures with verified ownership. | `benchmarks/results/local-clean-timing.json` |
+
+None of this replaces the independent qualification evidence the policy
+requires. The review's 365-test run and every run since are author evidence.
 
 ## R0 — Make success trustworthy
 
