@@ -49,7 +49,17 @@ python -m pip install --no-deps -e .
 Verify the environment is the locked one:
 
 ```bash
-python -m pip freeze | diff - requirements.lock && echo "environment matches the lock"
+python scripts/lock_requirements.py --check requirements.lock
+python -m pip check
+```
+
+`requirements.lock` is generated, not edited. Its header records that
+versions came from the installed distributions via `importlib.metadata` and
+that every sha256 was computed over a real wheel fetched by pip for CPython
+3.11/3.12/3.13 on manylinux x86-64. Regenerate it with:
+
+```bash
+python scripts/lock_requirements.py --output requirements.lock
 ```
 
 If `--require-hashes` fails on a platform the lock does not cover, the
@@ -127,14 +137,56 @@ Artifacts are content-addressed and their manifests are validated on load:
 python -m pytest tests/unit/test_artifacts.py tests/unit/test_evidence_and_messages.py -q
 ```
 
-To inspect a real run's evidence chain:
+To inspect a real run's evidence chain, run the deterministic offline demo
+from a disposable git repository:
 
 ```bash
-agent-squad run --config configs/demo.toml --json > run.json
+DEMO="$(mktemp -d)/demo"
+mkdir -p "$DEMO/tests"
+cd "$DEMO"
+git init -b main
+printf 'def add(a, b):\n    return a + b\n' > calc.py
+printf 'import os, sys\nsys.path.insert(0, os.path.dirname(__file__))\n' > conftest.py
+printf 'from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n' > tests/test_calc.py
+git add -A
+git -c user.name=reviewer -c user.email=reviewer@localhost commit -m initial
+AGENT_SQUAD=/path/to/agent-squad
+agent-squad run "Add round_half_up" --repo . \
+  --config "$AGENT_SQUAD/configs/offline.toml" \
+  --spec "$AGENT_SQUAD/examples/request-rounding.json" --json > run.json
+```
+
+Check the verdict, then validate every artifact record and its blob:
+
+```bash
 python - <<'PY'
 import json
+
 run = json.load(open("run.json"))
-print(json.dumps(run["contract"], indent=2))
+contract = run["contract"]
+assert run["status"] == "succeeded", run["status"]
+assert contract is not None and contract["outcome"] == "accepted", contract
+assert contract["binding_hash"], "the verdict is not bound to its inputs"
+for verdict in contract["verdicts"]:
+    assert verdict["state"] != "not_satisfied", verdict
+print("accepted:", contract["binding_hash"])
+PY
+
+RUN_ID="$(python -c 'import json; print(json.load(open("run.json"))["run_id"])')"
+agent-squad inspect "$RUN_ID" --artifacts --json > artifacts.json
+python - <<'PY'
+import hashlib, json
+from pathlib import Path
+from agent_squad.models.artifact import Artifact
+
+payload = json.load(open("artifacts.json"))
+assert payload["artifacts"], "the run recorded no artifacts"
+for raw in payload["artifacts"]:
+    artifact = Artifact.model_validate(raw)
+    blob = Path(artifact.uri)
+    assert blob.is_file(), blob
+    assert hashlib.sha256(blob.read_bytes()).hexdigest() == artifact.sha256
+print(f"{len(payload['artifacts'])} artifacts validated")
 PY
 ```
 
@@ -162,29 +214,94 @@ are the numbers to check; both are asserted with `time.monotonic()`.
 ## 7. Schema migrations and backup/restore
 
 ```bash
-python -m pytest tests/unit/test_schema_migration.py tests/integration/test_backup_restore.py -q
-python scripts/backup_restore.py --help
+(cd "$AGENT_SQUAD" && python -m pytest \
+  tests/unit/test_schema_migration.py tests/integration/test_backup_restore.py -q)
+python "$AGENT_SQUAD/scripts/backup_restore.py" --help
 ```
 
 Migrations are ordered and idempotent, keyed on SQLite `PRAGMA user_version`.
-Restoring a backup and re-opening it must produce an equivalent projection.
+A file left by an older release (`user_version = 0` but the baseline tables
+present) is adopted at its recorded version and upgraded in place; a file
+written by a newer build is refused rather than used with an older schema.
+Opening the store twice applies nothing the second time.
+
+The store runs in WAL mode, so a filesystem copy of `state.db` is not a
+backup. Take a consistent snapshot while the runtime is live, and restore it
+only after the runtime has stopped writing:
+
+```bash
+RUN_DB=".agent-squad/runs/$RUN_ID/state.db"
+python "$AGENT_SQUAD/scripts/backup_restore.py" backup \
+  --database "$RUN_DB" --output "$HOME/agent-squad-backups/$RUN_ID.db"
+python "$AGENT_SQUAD/scripts/backup_restore.py" verify \
+  --database "$HOME/agent-squad-backups/$RUN_ID.db"
+python "$AGENT_SQUAD/scripts/backup_restore.py" restore \
+  --backup "$HOME/agent-squad-backups/$RUN_ID.db" --database "$RUN_DB"
+```
+
+The snapshot is checked with `PRAGMA integrity_check` before it replaces
+anything, and the swap is an atomic rename. Restoring a backup and re-opening
+it must produce an equivalent projection.
 
 ---
 
 ## 8. Metrics
 
 ```bash
-python scripts/render_local_results.py --help
-python -m pytest tests/evaluation/test_evaluation_statistics.py -q
+agent-squad benchmark --suite full --trials 3 --json > benchmark.json
+(cd "$AGENT_SQUAD" && python -m pytest tests/evaluation/test_evaluation_statistics.py -q)
 ```
 
 The evaluator derives every published metric from the raw artifacts,
 including failed, timed-out and cancelled work — the denominator is the
 number of dispatched attempts, not the number that happened to finish.
+Rates use exact one-sided binomial limits; latency and cost comparisons use
+clustered intervals rather than treating repeated trials as independent:
+
+```python
+from agent_squad.benchmark.statistics import binomial_limit
+
+# Example: 18 accepted out of 20 trials.
+print(binomial_limit(18, 20).to_dict())
+```
+
+Reproduction means agreement **within measured intervals**, not identical
+timings:
+
+1. Run at least three trials per task/strategy cell and retain every result.
+   Failed, timed-out and cancelled trials stay in the denominator.
+2. Report an acceptance rate with a 95% exact binomial interval. Zero false
+   accepts in 300 cases gives a one-sided 95% upper limit of about 0.994%,
+   not 0%.
+3. Report p50 and p95 wall-clock separately; a mean alone hides the tail.
+4. For paired strategy comparisons, use paired differences and a clustered
+   interval by repository/task. Repeated seeds are not independent samples.
+5. Record cold/warm conditions, machine load, CPU/GPU model and process
+   occupancy with the sample. A noisy host widens intervals; it does not
+   license discarding inconvenient samples.
+6. Overlapping timing intervals are unresolved, not proof that one
+   configuration is faster.
 
 ---
 
-## 9. What a reviewer should record
+## 9. CI matrix
+
+`.github/workflows/ci.yml` runs one job per supported interpreter on
+`ubuntu-24.04`:
+
+| Cell | Python | Steps |
+|---|---|---|
+| 1 | 3.11 | hash-locked install, `ruff`, `mypy`, `pytest` |
+| 2 | 3.12 | hash-locked install, `ruff`, `mypy`, `pytest` |
+| 3 | 3.13 | hash-locked install, `ruff`, `mypy`, `pytest` |
+
+The workflow is the source of truth for CI status: link the successful run
+for the release commit in the assessment record. This document does not
+claim a cell passed on its own.
+
+---
+
+## 10. What a reviewer should record
 
 For each criterion, the evidence bundle must contain: the release commit,
 the environment identifiers above, the raw outcomes (including failures and

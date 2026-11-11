@@ -730,6 +730,7 @@ def record_deadline_summary(
 
 
 __all__ = [
+    "CANCELLATION_ACK_S",
     "DeadlineExceeded",
     "DeadlineGuard",
     "DeadlineState",

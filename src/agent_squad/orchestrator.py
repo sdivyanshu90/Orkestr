@@ -57,7 +57,7 @@ from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
 from .providers.ledger import RequestLedger
 from .providers.registry import ProviderRouter, build_providers
-from .runtime.deadline import DeadlineExceeded, RunDeadline
+from .runtime.deadline import DeadlineExceeded, RunDeadline, bind_run_scope
 from .runtime.registry import ResourceRegistry, reconcile
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
@@ -464,6 +464,10 @@ class Orchestrator:
     ) -> RunOutcome:
         self.logger.info("run started", objective=objective[:120])
         self.cancellation = cancellation or asyncio.Event()
+        # The pre-scheduler phases and the synchronous seam read cancellation
+        # from the ambient scope; bind the run's token so a signal reaches
+        # them and not only the tasks that already have the token.
+        bind_run_scope(cancellation=self.cancellation, run_id=self.config.run_id)
 
         # ---- durable ownership -------------------------------------------
         # Every run that mutates state takes exclusive ownership first, so
@@ -784,22 +788,31 @@ class Orchestrator:
                     run_id=self.config.run_id,
                     payload={"invalidated": invalidated, "reason": "base revision changed"},
                 )
+        # A run that ran out of time is reported as cancelled even when
+        # every task it managed to run succeeded: the request was not
+        # judged, and reporting success would claim an acceptance that was
+        # never issued.
+        final_status = (
+            RunStatus.CANCELLED if deadline_exceeded is not None else summary.status
+        )
         self.log.append(
             EventType.RUN_COMPLETED,
             run_id=self.config.run_id,
             payload={
-                "status": summary.status.value,
+                "status": final_status.value,
                 "wall_clock_s": summary.wall_clock_s,
             },
         )
         self.state.create_checkpoint(
-            self.config.run_id, label="run-complete", metadata={"status": summary.status.value}
+            self.config.run_id,
+            label="run-complete",
+            metadata={"status": final_status.value},
         )
         await self._release_ownership()
 
         return RunOutcome(
             run_id=self.config.run_id,
-            status=summary.status,
+            status=final_status,
             contract=verdict,
             summary=summary,
             decision=decision,
@@ -1103,7 +1116,7 @@ class Orchestrator:
         self, context: RevisionContext, contract: RequestContract
     ) -> PlanResult:
         """Ask the planner for a revised plan."""
-        from ..planning.planner import PlanRequest
+        from .planning.planner import PlanRequest
 
         planner = build_planner(self.config, self.provider)
         request = PlanRequest(
