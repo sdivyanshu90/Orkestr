@@ -25,15 +25,17 @@ attempt.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .agents.runner import WorkerRunner
 from .dag.graph import TaskGraph
+from .errors import ValidationError
 from .models.task import TaskStatus, utcnow
-from .scheduler.engine import Scheduler
+from .planning.planner import PlanResult
 from .store.db import Database
 from .store.events import EventLog, EventType
 from .store.state import StateStore
@@ -300,55 +302,66 @@ async def resume_run(
     config = RunConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
     orchestrator = Orchestrator(config, data_dir=root.parent.parent)
     try:
-        specs = orchestrator.state.list_task_specs(run_id)
-        if not specs:
+        # A resume takes durable ownership too: two processes must not
+        # resume the same run, and the loser's writes must be fenced out.
+        owner_id = f"{run_id}:{os.getpid()}"
+        try:
+            fence = orchestrator.state.acquire_run_ownership(
+                run_id,
+                owner_id=owner_id,
+                owner_pid=os.getpid(),
+                lease_s=config.scheduler.lease_ttl_s,
+            )
+        except ValidationError as exc:
             return {
                 "run_id": run_id,
                 "resumed": False,
-                "reason": "the run has no recoverable task specifications",
+                "reason": f"another process owns this run: {exc.message}",
                 "recovery": report.to_dict(),
             }
-        graph = TaskGraph()
-        graph.add_all(specs)
-        graph.link()
+        orchestrator.owner_id = owner_id
+        orchestrator.fence = fence
+        orchestrator.cancellation = asyncio.Event()
+        heartbeat = asyncio.create_task(orchestrator._heartbeat_ownership())
+        try:
+            specs = orchestrator.state.list_task_specs(run_id)
+            if not specs:
+                return {
+                    "run_id": run_id,
+                    "resumed": False,
+                    "reason": "the run has no recoverable task specifications",
+                    "recovery": report.to_dict(),
+                }
+            graph = TaskGraph()
+            graph.add_all(specs)
+            graph.link()
 
-        runner = WorkerRunner(
-            config=config,
-            state=orchestrator.state,
-            log=orchestrator.log,
-            artifacts=orchestrator.artifacts,
-            worktrees=orchestrator.worktrees,
-            bus=orchestrator.bus,
-            provider=orchestrator.provider,
-            supervisor=SUPERVISOR,
-            policy=orchestrator.policy,
-            approver=orchestrator.approver.request,
-            budget=orchestrator.budget,
-        )
-        scheduler = Scheduler(
-            config=config,
-            graph=graph,
-            state=orchestrator.state,
-            log=orchestrator.log,
-            runner=runner,
-            gate=orchestrator.gate,
-            briefs={},
-            bus=orchestrator.bus,
-            max_workers=config.scheduler.max_workers,
-            idempotency_prefix=config.run_id,
-            base_revision=(
-                orchestrator.worktrees.head_revision()
-                if orchestrator.worktrees.has_commits()
-                else None
-            ),
-        )
-        summary = await scheduler.run()
-        return {
-            "run_id": run_id,
-            "resumed": True,
-            "status": summary.status.value,
-            "summary": summary.model_dump(mode="json"),
-            "recovery": report.to_dict(),
-        }
+            runner = orchestrator._build_runner()
+            scheduler = orchestrator._build_scheduler(
+                graph,
+                PlanResult(tasks=list(specs), briefs={}),
+                runner=runner,
+                max_workers=config.scheduler.max_workers,
+                base_revision=(
+                    orchestrator.worktrees.head_revision()
+                    if orchestrator.worktrees.has_commits()
+                    else None
+                ),
+                cancellation=orchestrator.cancellation,
+                deadline=None,
+            )
+            summary = await scheduler.run()
+            return {
+                "run_id": run_id,
+                "resumed": True,
+                "status": summary.status.value,
+                "summary": summary.model_dump(mode="json"),
+                "recovery": report.to_dict(),
+            }
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+            await orchestrator._release_ownership()
     finally:
         await orchestrator.aclose()

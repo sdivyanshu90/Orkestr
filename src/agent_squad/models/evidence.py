@@ -42,7 +42,15 @@ class CriterionState(str, Enum):
 
 
 class CheckRecord(BaseModel):
-    """The record of one independently executed check."""
+    """The record of one independently executed check.
+
+    ``passed`` is the *complete* result of the check, not merely the
+    command's exit code.  A command that exits zero but whose output does
+    not match what was required has **not** passed, and a verifier that
+    only looks at the exit code will accept work that is wrong.  The exit
+    code is recorded separately because it is useful for diagnosis, but it
+    is not the verdict.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +58,9 @@ class CheckRecord(BaseModel):
     kind: str
     command: tuple[str, ...] = ()
     exit_code: int | None = None
+    passed: bool = False
+    """The complete result: exit code *and* every match predicate."""
+
     stdout_excerpt: str = ""
     stderr_excerpt: str = ""
     duration_s: float = 0.0
@@ -58,10 +69,13 @@ class CheckRecord(BaseModel):
     log_artifact_id: str | None = None
     deterministic: bool = True
     error: str | None = None
+    predicates: dict[str, bool] = Field(default_factory=dict)
+    """The individual match predicates, so a failure says which one failed."""
 
     @property
-    def passed(self) -> bool:
-        return self.exit_code == 0 and self.error is None
+    def ok(self) -> bool:
+        """Whether the check passed, by its complete result."""
+        return self.passed and self.error is None
 
 
 class ChangedFile(BaseModel):

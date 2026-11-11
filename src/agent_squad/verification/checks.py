@@ -39,6 +39,8 @@ def _record(
     *,
     command: tuple[str, ...] = (),
     exit_code: int | None = None,
+    passed: bool = False,
+    predicates: dict[str, bool] | None = None,
     stdout: str = "",
     stderr: str = "",
     duration_s: float = 0.0,
@@ -46,11 +48,19 @@ def _record(
     error: str | None = None,
     deterministic: bool = True,
 ) -> CheckRecord:
+    """Build a check record.
+
+    ``passed`` is the complete verdict.  ``exit_code`` is recorded for
+    diagnosis but is never the verdict on its own: a command that exits zero
+    with the wrong output has failed.
+    """
     return CheckRecord(
         criterion_id=criterion.id,
         kind=criterion.kind.value,
         command=command,
         exit_code=exit_code,
+        passed=passed,
+        predicates=dict(predicates or {}),
         stdout_excerpt=stdout[-4000:],
         stderr_excerpt=stderr[-4000:],
         duration_s=duration_s,
@@ -89,6 +99,8 @@ async def run_criterion(
             _record(
                 criterion,
                 exit_code=0 if exists else 1,
+                passed=exists,
+                predicates={"exists": exists},
                 stdout=f"{spec['path']} exists: {exists}",
                 error=None if exists else f"file not found: {spec['path']}",
             )
@@ -118,6 +130,8 @@ async def run_criterion(
             _record(
                 criterion,
                 exit_code=0 if ok else 1,
+                passed=ok,
+                predicates={"pattern_matched": found, "expected_presence": wants_contains},
                 stdout=f"pattern {pattern!r} present={found}",
                 error=None if ok else f"pattern {pattern!r} present={found}",
             )
@@ -129,6 +143,8 @@ async def run_criterion(
             _record(
                 criterion,
                 exit_code=0 if ok else 1,
+                passed=ok,
+                predicates={"changes_present": has_changes},
                 stdout=f"changes present: {has_changes}",
                 error=None if ok else "no changes were produced",
             )
@@ -140,6 +156,8 @@ async def run_criterion(
             _record(
                 criterion,
                 exit_code=0 if ok else 1,
+                passed=ok,
+                predicates={"changes_present": has_changes},
                 stdout=f"changes present: {has_changes}",
                 error=None if ok else "unexpected changes were produced",
             )
@@ -208,11 +226,21 @@ async def _run_command(
                 criterion,
                 command=command,
                 exit_code=result.exit_code,
+                passed=ok,
+                predicates={
+                    "pattern_matched": found,
+                    "exit_code_zero": result.exit_code == 0,
+                },
                 stdout=stdout,
                 stderr=stderr,
                 duration_s=result.duration_s,
                 started_at=started,
-                error=None if ok else f"pattern {pattern!r} found={found}",
+                error=None
+                if ok
+                else (
+                    f"pattern {pattern!r} found={found} "
+                    f"(exit code {result.exit_code})"
+                ),
             )
         )
     ok = result.exit_code == 0 and not result.timed_out
@@ -221,6 +249,11 @@ async def _run_command(
             criterion,
             command=command,
             exit_code=result.exit_code,
+            passed=ok,
+            predicates={
+                "exit_code_zero": result.exit_code == 0,
+                "not_timed_out": not result.timed_out,
+            },
             stdout=stdout,
             stderr=stderr,
             duration_s=result.duration_s,

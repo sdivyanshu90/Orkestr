@@ -324,19 +324,26 @@ class IntegrationEngine:
                 kind="command_exits_zero",
                 command=tuple(command),
                 exit_code=None,
+                passed=False,
                 error=str(exc),
                 deterministic=True,
             )
+        ok = result.exit_code == 0 and not result.timed_out
         return CheckRecord(
             criterion_id="integration",
             kind="command_exits_zero",
             command=tuple(command),
             exit_code=result.exit_code,
+            passed=ok,
+            predicates={
+                "exit_code_zero": result.exit_code == 0,
+                "not_timed_out": not result.timed_out,
+            },
             stdout_excerpt=result.stdout[-4000:],
             stderr_excerpt=result.stderr[-4000:],
             duration_s=result.duration_s,
             started_at=started,
-            error=None if result.ok else f"exit code {result.exit_code}",
+            error=None if ok else f"exit code {result.exit_code}",
             deterministic=True,
         )
 

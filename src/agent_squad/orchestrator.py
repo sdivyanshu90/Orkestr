@@ -15,7 +15,9 @@ outputs, and the run records the difference.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as _dt
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from .agents.runner import WorkerRunner
 from .artifacts.store import ArtifactStore
 from .config import RunConfig
 from .dag.graph import TaskGraph
+from .errors import RunOwnershipError, ValidationError
 from .integration.engine import IntegrationEngine
 from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
@@ -202,6 +205,10 @@ class Orchestrator:
         self._record_exchanges = record_exchanges
         self.recorder: Any = None
         self._plan_version = 1
+        self.owner_id: str = ""
+        self.fence: int = 0
+        self.cancellation: asyncio.Event | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self.protected_paths: tuple[str, ...] = tuple(
             config.protected_material_paths or ()
         )
@@ -299,6 +306,29 @@ class Orchestrator:
         plan_override: PlanResult | None = None,
     ) -> RunOutcome:
         self.logger.info("run started", objective=objective[:120])
+        self.cancellation = cancellation or asyncio.Event()
+
+        # ---- durable ownership -------------------------------------------
+        # Every run that mutates state takes exclusive ownership first, so
+        # that two processes cannot drive the same run.  The fence is
+        # incremented on takeover, and a stale owner's writes are refused.
+        owner_id = f"{self.config.run_id}:{os.getpid()}"
+        try:
+            fence = self.state.acquire_run_ownership(
+                self.config.run_id,
+                owner_id=owner_id,
+                owner_pid=os.getpid(),
+                lease_s=self.config.scheduler.lease_ttl_s,
+            )
+        except ValidationError as exc:
+            raise RunOwnershipError(
+                f"another process is already running {self.config.run_id}: {exc.message}",
+                run_id=self.config.run_id,
+            ) from exc
+        self.owner_id = owner_id
+        self.fence = fence
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_ownership())
 
         # The isolation profile is checked *before* anything runs: a profile
         # that promises a boundary must either have it or refuse to start.
@@ -540,6 +570,7 @@ class Orchestrator:
         self.state.create_checkpoint(
             self.config.run_id, label="run-complete", metadata={"status": summary.status.value}
         )
+        await self._release_ownership()
 
         return RunOutcome(
             run_id=self.config.run_id,
@@ -557,6 +588,44 @@ class Orchestrator:
         )
 
     # ----------------------------------------------------------- integration
+
+    async def _heartbeat_ownership(self) -> None:
+        """Keep the ownership lease alive while the run works.
+
+        If the heartbeat ever fails -- because the ownership was taken
+        over -- the run stops, because a process that has lost the run must
+        not keep writing to it.
+        """
+        interval = max(1.0, self.config.scheduler.lease_ttl_s / 3)
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                alive = self.state.heartbeat_run_ownership(
+                    self.config.run_id, owner_id=self.owner_id, fence=self.fence
+                )
+                if not alive:
+                    self.logger.error(
+                        "run ownership was lost; stopping to avoid a split brain",
+                        run_id=self.config.run_id,
+                    )
+                    if self.cancellation is not None:
+                        self.cancellation.set()
+                    return
+        except asyncio.CancelledError:
+            return
+
+    async def _release_ownership(self) -> None:
+        """Release the run so that another process may take it over."""
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+        if self.owner_id:
+            with contextlib.suppress(Exception):
+                self.state.release_run_ownership(
+                    self.config.run_id, owner_id=self.owner_id, fence=self.fence
+                )
 
     async def _judge_contract(
         self, contract: RequestContract, integration: IntegrationResult | None

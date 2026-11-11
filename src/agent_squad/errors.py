@@ -147,6 +147,12 @@ class InfrastructureError(AgentSquadError):
     retryable = True
 
 
+class RunOwnershipError(AgentSquadError):
+    """Another process already owns this run."""
+
+    error_class = ErrorClass.POLICY
+
+
 class DependencyError(AgentSquadError):
     """A required dependency is missing, circular, or unsatisfiable."""
 

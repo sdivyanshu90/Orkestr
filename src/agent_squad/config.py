@@ -138,6 +138,15 @@ class SchedulerConfig(_Base):
     poll_interval_s: float = Field(default=0.05, gt=0)
     max_delegation_depth: int = Field(default=2, ge=0, le=5)
     stall_detection_s: float = Field(default=300.0, gt=0)
+    lease_ttl_s: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "How long a run's ownership lease lasts without a heartbeat.  "
+            "A lease that has expired may be taken over, which fences the "
+            "previous owner out."
+        ),
+    )
     max_replans: int = Field(
         default=1,
         ge=0,

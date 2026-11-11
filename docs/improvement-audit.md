@@ -13,7 +13,8 @@ The list below is what survived that process.
 
 ---
 
-**Current implementation priorities:** [Roadmap toward 9.5+](roadmap.md). The
+**Current implementation priorities:** [Roadmap toward 9.5+](roadmap.md).
+**Formal qualification:** [Strict scoring criteria](scoring-criteria.md). The
 roadmap incorporates the measured local-model results and makes request-level
 verification and resource cleanup the first release gates. This audit retains
 historical evidence and should not be read as the current delivery order.

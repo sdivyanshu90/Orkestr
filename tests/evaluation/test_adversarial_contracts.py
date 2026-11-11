@@ -325,6 +325,90 @@ async def test_a_run_reports_its_contract_outcome(tmp_path: Path, repo: Path) ->
 
 
 @pytest.mark.integration
+async def test_a_command_that_exits_zero_with_the_wrong_output_is_rejected(
+    trees,
+) -> None:
+    """The counterexample: exit code zero is not a verdict.
+
+    A command can succeed and still produce the wrong thing.  A verifier
+    that looks only at the exit code accepts work that is wrong, so the
+    verdict must be the *complete* result: the exit code **and** every
+    match predicate.
+    """
+    base, candidate = trees
+    contract = RequestContract(
+        objective="the report must say PASSED",
+        required_outcomes=(
+            criterion(
+                "output",
+                "command_output_matches",
+                {
+                    "command": ["python3", "-c", "print('all good')"],
+                    "pattern": "PASSED",
+                },
+            ),
+        ),
+    )
+    gate = ContractGate(RunConfig(run_id="r", repo_path=str(base)))
+    verdict = await gate.verify(contract, base_tree=base, candidate_tree=candidate)
+
+    assert verdict.outcome is VerificationOutcome.REJECTED
+    assert verdict.not_satisfied == ("output",)
+    assert verdict.established == ()
+
+
+@pytest.mark.integration
+async def test_an_output_mismatch_is_rejected_through_the_normal_run_entry_point(
+    tmp_path: Path, repo: Path
+) -> None:
+    """The same counterexample, driven through the run entry point.
+
+    The low-level check and the run-level verdict must agree.  A run that
+    reports acceptance for work whose output does not match is a false
+    accept.
+    """
+    spec = {
+        "objective": "the report must say PASSED",
+        "tasks": [
+            {
+                "id": "impl",
+                "title": "Write the report",
+                "objective": "Create report.txt containing PASSED",
+                "role": "implementer",
+                "depends_on": [],
+                "edits": [{"path": "report.txt", "content": "everything is fine\n"}],
+                "acceptance_criteria": [
+                    {
+                        "id": "output",
+                        "description": "the report says PASSED",
+                        "kind": "command_output_matches",
+                        "spec": {
+                            "command": ["cat", "report.txt"],
+                            "pattern": "PASSED",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    config = RunConfig(
+        run_id="run_output_mismatch",
+        repo_path=str(repo),
+        data_dir=str(tmp_path / "data"),
+        provider={"name": "mock", "model": "mock-deterministic-v1"},
+    )
+    orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
+    try:
+        outcome = await orchestrator.run("a mismatching report", request_spec=spec)
+    finally:
+        await orchestrator.aclose()
+
+    assert outcome.contract is not None
+    assert outcome.contract.outcome is not VerificationOutcome.ACCEPTED
+    assert outcome.contract.not_satisfied == ("output",)
+
+
+@pytest.mark.integration
 async def test_a_run_that_does_nothing_is_not_accepted(
     tmp_path: Path, repo: Path
 ) -> None:

@@ -223,7 +223,9 @@ they limit the project's claims.
 
 ## Next steps
 
-**Current priority:** follow [the roadmap toward 9.5+](docs/roadmap.md). It
+**Current priority:** follow [the roadmap toward 9.5+](docs/roadmap.md). Formal
+ratings require [the strict scoring criteria](docs/scoring-criteria.md);
+implementation status and test counts alone do not qualify a score. It
 places immutable request-level verification, owned-process cleanup, complete
 accounting and enforced isolation ahead of feature expansion. The lists below
 are earlier backlog context, not the current implementation order.

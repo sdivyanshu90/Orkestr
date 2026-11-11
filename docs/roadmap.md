@@ -1,6 +1,6 @@
 # Roadmap toward 9.5+/10
 
-**Updated: 2026-11-11. Status: proposed work, not implemented guarantees.**
+**Updated: 2026-11-11. Status: implementation roadmap; qualification is evidence-gated.**
 
 A 9.5 rating should mean a developer can trust the result, reproduce the
 measurement, recover an interrupted run, and understand the cost. More agents
@@ -8,10 +8,12 @@ or a longer feature list do not establish that. The priorities below build on
 Orkestr's existing local-first scheduler, worktrees, event log and verification
 boundary rather than replacing them.
 
-The rating is a subjective assessment. The exit criteria are proposed release
-targets; meeting them would supply evidence for a higher rating, not certify
-universal correctness or security. No phase is complete merely because its
-implementation or unit tests exist.
+Formal ratings must follow the [strict scoring policy](scoring-criteria.md),
+which defines 20 binary criteria, required evidence, confidence thresholds and
+non-negotiable score caps. Its 18 mandatory criteria total 95 points: **all must
+pass for 9.5/10**. The earlier conversational rating is not formal qualification.
+These are internal release requirements, not a guarantee of universal safety.
+No phase is complete merely because its implementation or unit tests exist.
 
 ## Evidence that determines the order
 
@@ -25,7 +27,7 @@ implementation or unit tests exist.
 - Cleanup found a residual model server. Sequential foreground requests therefore
   did not establish isolated GPU/CPU timing. The eight checkpoints include
   third-party MiniMax/Kimi distillations, not official vendor models.
-- The recorded repository suite passed **294 tests**. This is useful regression
+- The 2026-11-10 benchmark snapshot recorded **294 passing tests**. This is useful regression
   coverage, but it does not close the independently documented verification,
   containment, recovery and evaluation gaps.
 
@@ -36,7 +38,7 @@ Sources: [workflow results](local-benchmark-results.md),
 
 ## Release order and decision gates
 
-| Stage | Outcome | Depends on | Proposed evidence required to exit |
+| Stage | Outcome | Depends on | Required evidence to exit |
 |---|---|---|---|
 | R0 | Success means the original request passed independent checks | None | Adversarial false-success suite, protected request contract, verified final tree |
 | R1 | Runs respect resource limits and stop cleanly | Start alongside R0 | No owned child processes remain across 100 cancellation/failure cycles; complete attempt accounting |
@@ -48,6 +50,31 @@ Sources: [workflow results](local-benchmark-results.md),
 These are dependency gates, not calendar promises. R0 and R1 are the first
 implementation milestones. R2 precedes evaluation on untrusted repositories.
 Do not expand the model or feature matrix while those gates are failing.
+The strict policy takes precedence over any abbreviated gate description here.
+
+| Roadmap stage | Required scoring criteria |
+|---|---|
+| R0 | C1–C5 |
+| R1 | R1, R2, R4 |
+| R2 | R3, S1–S3 |
+| R3 | V1, V2, M1, M2 |
+| R4 | V3 |
+| R5 | U1, plus continued passage of all earlier mandatory criteria |
+
+V4 and U2 are stretch criteria for 9.75 and 10.0; they cannot compensate for
+missing mandatory evidence. Stage names and criterion IDs are separate labels.
+
+## Immediate closure work after the implementation review
+
+The 2026-11-11 review found real implementation progress, but also reproduced
+an output-check failure being accepted by the contract gate. It additionally
+found incomplete execution-path wiring for ownership and request accounting,
+partial deadline enforcement, and a private-HOME claim without actual isolation.
+The exact observations and closure requirements are in
+[the scoring policy's blocking examples](scoring-criteria.md#6-blocking-examples-from-the-2026-11-11-review).
+Treat these as release blockers to revalidate, not features completed by their
+commit titles. The review passed 365 tests with one capability-dependent skip;
+that run does not replace the required independent qualification evidence.
 
 ## R0 — Make success trustworthy
 
@@ -79,7 +106,7 @@ Do not expand the model or feature matrix while those gates are failing.
    request. Include cases where each individual patch passes but their union fails.
 
 **Exit:** every accepted run links to the unchanged approved contract and final
-candidate evidence. Target **zero false accepts across at least 300 independent,
+candidate evidence. Require **zero false accepts across at least 300 independent,
 held-out adversarial cases**, while reporting false rejects on known-correct
 candidates. Zero failures in 300 independent trials gives an approximate
 one-sided 95% upper bound of 1%, not a proof of zero risk. Correlated variants
@@ -264,26 +291,26 @@ this gate; review the run records and unresolved defects.
 Each PR includes its migration impact, regression evidence and a reproducible
 before/after case. Stabilize shared interfaces before parallel implementation.
 
-## Rating rubric and scope discipline
+## Rating qualification and scope discipline
 
-Use this as an internal review aid, never as a benchmark-derived scientific score.
+The [strict scoring policy](scoring-criteria.md) is the sole scoring authority.
 
-| Dimension | Weight | Evidence for full credit |
-|---|---:|---|
-| Correctness and trust | 30% | Protected request contract, independent final-tree verification, held-out adversarial evidence |
-| Reliability and resource control | 20% | Bounded deadlines, complete cleanup/accounting, fenced recovery and tested migrations |
-| Demonstrated developer value | 20% | Real-repository acceptance and quality/time/cost gains against a strong baseline |
-| Containment and authority | 15% | Enforced supported isolation, exact approvals, scoped credentials and independent review |
-| Reproducibility and measurement | 10% | Pinned inputs, complete denominators, valid timing conditions and auditable artifacts |
-| Usability and operations | 5% | Independent onboarding, understandable evidence and sustained external use |
+- **9.5:** all 18 mandatory criteria PASS, with reviewed evidence for the same
+  release and scope; 95 points, no applicable lower cap.
+- **9.75:** the 9.5 requirements plus either independently replicated results
+  (V4) or the extended operational record (U2).
+- **10.0:** all 20 criteria PASS; 100 points.
 
-A weighted score of 9.5 is only a candidate assessment. **No 9.5+ claim while any
-R0–R2 release blocker remains**, while benchmark failures are hidden, or while
-critical trust-boundary issues are unresolved. A local single-user release may
-reach this standard within its declared scope; distributed execution, public
-multi-tenancy and unrestricted autonomous deployment require separate evidence.
+An unresolved false acceptance or critical authority/containment bypass caps the
+formal score at **8.0**. Missing lifecycle/authority evidence caps it at **8.5**;
+missing real-repository value or measurement evidence caps it at **9.0**. Any
+other missing mandatory criterion blocks 9.5 and caps it at **9.4**. Always apply
+the lowest cap; do not round upward. A formal score is NOT ASSESSED until a full
+assessment record exists. Missing evidence is not assumed to pass.
 
-Defer distributed workers, arbitrary agent spawning, large model catalogs and
-UI expansion until these gates pass. Optimize graph-scan asymptotics only after
-profiles show they matter. More tests, more agents and faster token generation
-are supporting tools; independently demonstrated reliable outcomes are the goal.
+A local single-user release can qualify within its declared scope. Distributed
+execution, public multi-tenancy and unrestricted deployment need additional
+scope-specific evidence. Defer arbitrary agent spawning, large catalogs and UI
+expansion until the mandatory gates pass. Optimize graph-scan asymptotics only
+when profiles show they matter. More tests, agents or tokens cannot substitute
+for independently demonstrated reliable outcomes.

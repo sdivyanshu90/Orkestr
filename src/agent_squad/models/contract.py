@@ -73,17 +73,23 @@ class OutcomeState(str, Enum):
     ESTABLISHED = "established"
     """Failed on the base tree and passes on the candidate: the work caused it."""
 
+    PRESERVED = "preserved"
+    """Held before the work and still holds: the work did not break it.
+
+    This satisfies the requirement.  Rejecting every pre-satisfied outcome
+    would be wrong: "the test suite must still pass" is an invariant, and an
+    invariant that already held is exactly what was asked for.
+    """
+
     PRE_SATISFIED = "pre_satisfied"
-    """Already true before the work started: proves nothing about the work."""
+    """Already held before the work, and the run did not touch what the
+    outcome is about, so it establishes nothing about the work."""
 
     NOT_SATISFIED = "not_satisfied"
-    """Fails on the candidate tree."""
+    """Does not hold on the candidate tree."""
 
     UNVERIFIABLE = "unverifiable"
     """The check could not be executed."""
-
-    NOT_ALLOWED = "not_allowed"
-    """The contract does not permit this kind of pre-satisfied outcome."""
 
 
 class RequestContract(BaseModel):
@@ -174,8 +180,8 @@ class OutcomeVerdict(BaseModel):
     criterion_id: str
     state: OutcomeState
     detail: str = ""
-    base_exit_code: int | None = None
-    candidate_exit_code: int | None = None
+    base_passed: bool | None = None
+    candidate_passed: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
@@ -203,6 +209,11 @@ class ContractVerdict(BaseModel):
         return tuple(v.criterion_id for v in self.verdicts if v.state is OutcomeState.ESTABLISHED)
 
     @property
+    def preserved(self) -> tuple[str, ...]:
+        """Outcomes that held before the work and still hold after it."""
+        return tuple(v.criterion_id for v in self.verdicts if v.state is OutcomeState.PRESERVED)
+
+    @property
     def pre_satisfied(self) -> tuple[str, ...]:
         return tuple(v.criterion_id for v in self.verdicts if v.state is OutcomeState.PRE_SATISFIED)
 
@@ -224,6 +235,7 @@ class ContractVerdict(BaseModel):
             "verdicts": [v.to_dict() for v in self.verdicts],
             "commands": list(self.commands),
             "established": list(self.established),
+            "preserved": list(self.preserved),
             "pre_satisfied": list(self.pre_satisfied),
             "not_satisfied": list(self.not_satisfied),
             "unverifiable": list(self.unverifiable),

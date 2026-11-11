@@ -39,14 +39,14 @@ def test_unverified_criterion_has_no_state() -> None:
 
 def test_passed_deterministic_check() -> None:
     package = make_package(
-        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0)]
+        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0, passed=True)]
     )
     assert package.state_for("c1") is CriterionState.EXECUTED_PASSED
 
 
 def test_failed_deterministic_check() -> None:
     package = make_package(
-        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=1)]
+        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=1, passed=False)]
     )
     assert package.state_for("c1") is CriterionState.EXECUTED_FAILED
 
@@ -55,7 +55,11 @@ def test_advisory_check_is_never_reported_as_passed() -> None:
     package = make_package(
         [
             CheckRecord(
-                criterion_id="c1", kind="llm_review", exit_code=0, deterministic=False
+                criterion_id="c1",
+                kind="llm_review",
+                exit_code=0,
+                passed=True,
+                deterministic=False,
             )
         ]
     )
@@ -65,8 +69,8 @@ def test_advisory_check_is_never_reported_as_passed() -> None:
 def test_the_strongest_state_wins() -> None:
     package = make_package(
         [
-            CheckRecord(criterion_id="c1", kind="file_exists", exit_code=1),
-            CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0),
+            CheckRecord(criterion_id="c1", kind="file_exists", exit_code=1, passed=False),
+            CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0, passed=True),
         ]
     )
     assert package.state_for("c1") is CriterionState.EXECUTED_PASSED
@@ -79,7 +83,7 @@ def test_evidence_rejects_a_check_for_an_unknown_criterion() -> None:
             task_id="t",
             producer="p",
             criteria_addressed=("c1",),
-            checks=[CheckRecord(criterion_id="other", kind="file_exists", exit_code=0)],
+            checks=[CheckRecord(criterion_id="other", kind="file_exists", exit_code=0, passed=True)],
         )
 
 
@@ -95,7 +99,7 @@ def test_evidence_requires_a_hash_with_an_artifact_id() -> None:
 
 def test_evidence_summary_counts_states() -> None:
     package = make_package(
-        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0)]
+        [CheckRecord(criterion_id="c1", kind="file_exists", exit_code=0, passed=True)]
     )
     summary = package.summary()
     assert summary["criteria"]["executed_passed"] == 1
