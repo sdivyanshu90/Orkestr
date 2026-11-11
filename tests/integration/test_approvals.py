@@ -220,11 +220,11 @@ def test_the_broker_records_and_resolves_an_approval(tmp_path: Path) -> None:
 
     async def go() -> bool:
         task = asyncio.create_task(approve_soon())
-        result = await broker.request(
+        grant = await broker.request(
             action="git.push", rationale="pushing the change", arguments=["git", "push"]
         )
         await task
-        return result
+        return grant.approved
 
     assert asyncio.run(go()) is True
     assert broker.requested
@@ -244,9 +244,10 @@ def test_the_broker_times_out_rather_than_hanging(tmp_path: Path) -> None:
     )
 
     async def go() -> bool:
-        return await broker.request(
+        grant = await broker.request(
             action="git.push", rationale="nobody is watching", arguments=[]
         )
+        return grant.approved
 
     assert asyncio.run(go()) is False
     events = [

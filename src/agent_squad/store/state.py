@@ -30,6 +30,16 @@ from .db import Database, dumps, loads
 from .events import EventLog, EventType
 
 
+def _parse_timestamp(value: Any) -> float | None:
+    """Parse an ISO timestamp into a POSIX timestamp."""
+    if not value:
+        return None
+    try:
+        return _dt.datetime.fromisoformat(str(value)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 class StateStore:
     """Transactional access to the run/task state projections."""
 
@@ -646,6 +656,157 @@ class StateStore:
             for r in rows
         ]
 
+    # ------------------------------------------------------- run ownership
+
+    def acquire_run_ownership(
+        self,
+        run_id: str,
+        *,
+        owner_id: str,
+        owner_pid: int | None = None,
+        lease_s: float = 300.0,
+    ) -> int:
+        """Take exclusive ownership of a run, returning a fencing token.
+
+        Two processes must not drive the same run at once: their state
+        updates would interleave and the attempt fence would not save them,
+        because each would hold a *current* attempt number at some moment.
+
+        The acquisition is atomic (``BEGIN IMMEDIATE``): the loser of a
+        race either sees no row, or sees a row whose lease has expired.  The
+        returned token is a monotonically increasing **fence**: every later
+        ownership-sensitive update carries it, and an update with a stale
+        fence is rejected.
+        """
+        now = utcnow()
+        now_ts = now.timestamp()
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT owner_id, fence, state, heartbeat_at FROM run_ownership "
+                "WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is not None and row["state"] == "active":
+                last_beat = _parse_timestamp(row["heartbeat_at"])
+                if last_beat is not None and now_ts - last_beat < lease_s:
+                    raise ValidationError(
+                        f"run {run_id} is already owned by {row['owner_id']}",
+                        run_id=run_id,
+                        owner=row["owner_id"],
+                    )
+            fence = (int(row["fence"]) + 1) if row is not None else 1
+            conn.execute(
+                "INSERT INTO run_ownership(run_id, owner_id, owner_pid, fence, state, "
+                "acquired_at, heartbeat_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(run_id) DO UPDATE SET owner_id=excluded.owner_id, "
+                "owner_pid=excluded.owner_pid, fence=excluded.fence, state='active', "
+                "acquired_at=excluded.acquired_at, heartbeat_at=excluded.heartbeat_at, "
+                "released_at=NULL",
+                (
+                    run_id,
+                    owner_id,
+                    owner_pid,
+                    fence,
+                    "active",
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        return fence
+
+    def heartbeat_run_ownership(
+        self, run_id: str, *, owner_id: str, fence: int
+    ) -> bool:
+        """Refresh the lease.  Fails if the fence is stale."""
+        now = utcnow().isoformat()
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE run_ownership SET heartbeat_at = ? "
+                "WHERE run_id = ? AND owner_id = ? AND fence = ? AND state = 'active'",
+                (now, run_id, owner_id, fence),
+            )
+            return cur.rowcount > 0
+
+    def release_run_ownership(self, run_id: str, *, owner_id: str, fence: int) -> bool:
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE run_ownership SET state = 'released', released_at = ? "
+                "WHERE run_id = ? AND owner_id = ? AND fence = ?",
+                (utcnow().isoformat(), run_id, owner_id, fence),
+            )
+            return cur.rowcount > 0
+
+    def run_ownership(self, run_id: str) -> dict[str, Any] | None:
+        row = self._db.query_one(
+            "SELECT * FROM run_ownership WHERE run_id = ?", (run_id,)
+        )
+        return dict(row) if row else None
+
+    def assert_run_ownership(self, run_id: str, *, owner_id: str, fence: int) -> None:
+        """Raise unless the caller still holds the run with this fence."""
+        record = self.run_ownership(run_id)
+        if record is None:
+            raise ValidationError(
+                f"run {run_id} has no owner; ownership must be acquired first",
+                run_id=run_id,
+            )
+        if int(record["fence"]) != fence or record["owner_id"] != owner_id:
+            raise StaleAttemptError(
+                f"run {run_id} is owned by {record['owner_id']} at fence "
+                f"{record['fence']}; this caller holds {owner_id} at fence {fence}",
+                run_id=run_id,
+            )
+
+    # ------------------------------------------------------- durable messages
+
+    def record_message_versioned(
+        self, message: Any, version: int, conversation: str = ""
+    ) -> bool:
+        """Record a message, refusing a duplicate id.
+
+        The store is the authority on duplication, so the check survives a
+        restart: a message that was already delivered cannot be delivered
+        again by a process that has lost its in-memory state.
+        """
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO messages(id, run_id, kind, sender, recipient, "
+                "task_id, correlation_id, payload, note, created_at, version, "
+                "conversation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    message.id,
+                    message.run_id,
+                    message.kind,
+                    message.sender,
+                    message.recipient,
+                    message.task_id,
+                    message.correlation_id,
+                    dumps(message.payload),
+                    message.note,
+                    message.created_at.isoformat(),
+                    version,
+                    conversation,
+                ),
+            )
+            return cur.rowcount > 0
+
+    def latest_message_version(
+        self, run_id: str, sender: str, conversation: str | None
+    ) -> int:
+        """The highest version recorded for a conversation."""
+        if conversation:
+            row = self._db.query_one(
+                "SELECT MAX(version) AS v FROM messages WHERE run_id = ? AND sender = ? "
+                "AND conversation = ?",
+                (run_id, sender, conversation),
+            )
+        else:
+            row = self._db.query_one(
+                "SELECT MAX(version) AS v FROM messages WHERE run_id = ? AND sender = ?",
+                (run_id, sender),
+            )
+        return int(row["v"]) if row and row["v"] is not None else 0
+
     # ------------------------------------------------------------- approvals
 
     def create_approval(
@@ -657,13 +818,18 @@ class StateStore:
         arguments: list[str] | None = None,
         risk: str = "medium",
         task_id: str | None = None,
+        binding: dict[str, Any] | None = None,
+        ttl_s: float | None = None,
     ) -> str:
+        """Record an approval request, bound to the action it is about."""
         approval_id = new_id("apr")
         now = utcnow()
+        expires_at = (now.timestamp() + ttl_s) if ttl_s else None
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO approvals(approval_id, run_id, task_id, action, rationale, "
-                "arguments, risk, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                "arguments, risk, status, created_at, binding, expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     approval_id,
                     run_id,
@@ -674,6 +840,8 @@ class StateStore:
                     risk,
                     "pending",
                     now.isoformat(),
+                    dumps(binding or {}),
+                    expires_at,
                 ),
             )
             event = self._log.build(
@@ -687,6 +855,8 @@ class StateStore:
                     "rationale": rationale,
                     "arguments": arguments or [],
                     "risk": risk,
+                    "binding": binding or {},
+                    "expires_at": expires_at,
                 },
             )
             self._log.append_in_transaction(conn, event)
@@ -772,4 +942,6 @@ class StateStore:
             "decided_at": row["decided_at"],
             "reason": row["reason"],
             "created_at": row["created_at"],
+            "binding": loads(row["binding"], {}),
+            "expires_at": row["expires_at"],
         }

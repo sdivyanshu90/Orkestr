@@ -101,9 +101,13 @@ _MIGRATIONS: list[str] = [
         correlation_id TEXT,
         payload        TEXT NOT NULL DEFAULT '{}',
         note           TEXT NOT NULL DEFAULT '',
-        created_at     TEXT NOT NULL
+        created_at     TEXT NOT NULL,
+        version        INTEGER NOT NULL DEFAULT 1,
+        conversation   TEXT NOT NULL DEFAULT '',
+        seq            INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(run_id, sender, conversation, version);
 
     CREATE TABLE IF NOT EXISTS checkpoints (
         checkpoint_id TEXT PRIMARY KEY,
@@ -126,9 +130,22 @@ _MIGRATIONS: list[str] = [
         decided_by   TEXT,
         decided_at   TEXT,
         reason       TEXT NOT NULL DEFAULT '',
-        created_at   TEXT NOT NULL
+        created_at   TEXT NOT NULL,
+        binding      TEXT NOT NULL DEFAULT '{}',
+        expires_at   REAL
     );
     CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals(run_id, status);
+
+    CREATE TABLE IF NOT EXISTS run_ownership (
+        run_id       TEXT PRIMARY KEY,
+        owner_id     TEXT NOT NULL,
+        owner_pid    INTEGER,
+        fence        INTEGER NOT NULL DEFAULT 1,
+        state        TEXT NOT NULL DEFAULT 'active',
+        acquired_at  TEXT NOT NULL,
+        heartbeat_at TEXT NOT NULL,
+        released_at  TEXT
+    );
 
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,

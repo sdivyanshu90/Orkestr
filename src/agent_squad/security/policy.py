@@ -208,8 +208,16 @@ class PolicyEngine:
         scope_root: str | None = None,
         scope_patterns: tuple[str, ...] = (),
         approved: bool = False,
+        grant: Any = None,
+        binding: Any = None,
     ) -> PolicyDecision:
-        """Decide whether ``tool`` may run."""
+        """Decide whether ``tool`` may run.
+
+        ``approved`` is a legacy convenience flag; ``grant`` is the
+        authoritative form, because an approval is a decision about a
+        *specific* action.  When a grant is supplied it must match the
+        requested action exactly, or the action is refused.
+        """
         rule = self._rules.get(tool)
         if rule is None:
             decision = PolicyDecision(
@@ -238,16 +246,29 @@ class PolicyEngine:
             return path_decision
 
         needs_approval, action = self._requires_approval(rule, arguments)
-        if needs_approval and not approved:
-            decision = PolicyDecision(
-                decision=Decision.REQUIRE_APPROVAL,
-                reason=f"action {action!r} requires explicit human approval",
-                required_approval=True,
-                action=action,
-                capabilities=rule.required_capabilities,
-            )
-            self._record(run_id, task_id, actor, tool, arguments, decision)
-            return decision
+        if needs_approval:
+            if grant is not None:
+                allowed, reason = grant.authorises(binding)
+                if not allowed:
+                    decision = PolicyDecision(
+                        decision=Decision.DENY,
+                        reason=reason,
+                        required_approval=True,
+                        action=action,
+                        capabilities=rule.required_capabilities,
+                    )
+                    self._record(run_id, task_id, actor, tool, arguments, decision)
+                    return decision
+            elif not approved:
+                decision = PolicyDecision(
+                    decision=Decision.REQUIRE_APPROVAL,
+                    reason=f"action {action!r} requires explicit human approval",
+                    required_approval=True,
+                    action=action,
+                    capabilities=rule.required_capabilities,
+                )
+                self._record(run_id, task_id, actor, tool, arguments, decision)
+                return decision
 
         decision = PolicyDecision(
             decision=Decision.ALLOW,

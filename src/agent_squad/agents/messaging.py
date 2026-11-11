@@ -100,6 +100,9 @@ class MessageBus:
         * a sender that explicitly quotes an *older* version is rejected,
           because it is a delayed packet that would overwrite a newer
           result.
+        The store is the authority on both duplication and the current
+        version, so a message cannot be delivered twice merely because the
+        process restarted and lost its in-memory state.
         """
         async with self._lock:
             self._validate(message)
@@ -107,7 +110,7 @@ class MessageBus:
                 message.sender,
                 message.correlation_id or message.task_id or message.id,
             )
-            last_version = self._versions.get(key, 0)
+            last_version = self._latest_version(message, key)
             # An explicit version is a claim to supersede that version;
             # an unversioned message simply continues the conversation.
             effective_version = (
@@ -115,7 +118,13 @@ class MessageBus:
             )
             if effective_version != message.version:
                 message = message.model_copy(update={"version": effective_version})
-            self.state.record_message(message)
+            if not self.state.record_message_versioned(
+                message, message.version, key[1]
+            ):
+                raise ValidationError(
+                    f"message {message.id} has already been recorded",
+                    message_id=message.id,
+                )
             self.log.append(
                 EventType.MESSAGE_SENT,
                 run_id=message.run_id,
@@ -146,9 +155,30 @@ class MessageBus:
             )
         return message
 
+    def _latest_version(self, message: Message, key: tuple[str, str]) -> int:
+        """The current version of a conversation, from the durable store.
+
+        The store is consulted so that the version survives a restart; the
+        in-memory map is only a cache for conversations the store cannot
+        resolve.
+        """
+        sender, correlation = key
+        try:
+            return self.state.latest_message_version(
+                message.run_id, sender, correlation or None
+            )
+        except Exception:
+            return self._versions.get(key, 0)
+
     # ----------------------------------------------------------- validation
 
     def _validate(self, message: Message) -> None:
+        """Check a message before it is recorded.
+
+        The duplicate-id and stale-version checks are advisory here; the
+        *authoritative* duplicate check happens at insert time, because only
+        the store survives a restart.
+        """
         if message.id in self._seen_ids:
             raise ValidationError(
                 f"duplicate message id {message.id}", message_id=message.id
@@ -168,12 +198,8 @@ class MessageBus:
                 )
 
         key = (message.sender, message.correlation_id or message.task_id or message.id)
-        last_version = self._versions.get(key)
-        if (
-            last_version is not None
-            and message.version > 0
-            and message.version <= last_version
-        ):
+        last_version = self._latest_version(message, key)
+        if message.version > 0 and message.version <= last_version:
             raise ValidationError(
                 f"stale message version {message.version} for {key[0]} "
                 f"(latest is {last_version})",

@@ -47,6 +47,7 @@ from ..providers.base import (
     Usage,
     estimate_tokens,
 )
+from ..security.approval import ApprovalBinding
 from ..security.capabilities import CapabilitySet
 from ..security.injection import redact_secrets, wrap_untrusted
 from ..tools.base import ToolContext, ToolRegistry, ToolResult
@@ -115,6 +116,7 @@ class AgentLoop:
     on_policy_decision: Any = None
     tracer: Any = None
     on_approval_state: Any = None
+    contract_hash: str = ""
     provider_scope: str = "provider:default"
     max_repeats: int = 2
 
@@ -399,19 +401,40 @@ class AgentLoop:
                                 "awaiting", action=decision.action or call.name
                             )
                         )
-                    approved = bool(
-                        await _maybe_await(
-                            self.approver(
-                                action=decision.action or call.name,
-                                rationale=decision.reason,
-                                arguments=list(call.arguments.get("command") or [])
-                                if isinstance(call.arguments.get("command"), (list, tuple))
-                                else [],
-                                task_id=self.task_id,
-                                sender=self.actor,
-                            )
+                    grant = await _maybe_await(
+                        self.approver(
+                            action=decision.action or call.name,
+                            rationale=decision.reason,
+                            arguments=list(call.arguments.get("command") or [])
+                            if isinstance(call.arguments.get("command"), (list, tuple))
+                            else [],
+                            task_id=self.task_id,
+                            sender=self.actor,
+                            workspace=str(tool_context.workdir),
+                            contract_hash=self.contract_hash,
                         )
                     )
+                    # The grant is bound to the exact action.  Re-checking it
+                    # against the binding is what makes a stale approval
+                    # useless: if the request changed, or the agent asks for
+                    # a different command, the grant no longer matches.
+                    binding = ApprovalBinding(
+                        action=decision.action or call.name,
+                        arguments=tuple(
+                            str(a)
+                            for a in (
+                                call.arguments.get("command")
+                                if isinstance(
+                                    call.arguments.get("command"), (list, tuple)
+                                )
+                                else []
+                            )
+                        ),
+                        workspace=str(tool_context.workdir),
+                        contract_hash=self.contract_hash,
+                    )
+                    allowed, _reason = grant.authorises(binding)
+                    approved = allowed
                     if self.on_approval_state is not None:
                         await _maybe_await(
                             self.on_approval_state(
@@ -424,7 +447,7 @@ class AgentLoop:
                         ok=False,
                         error=(
                             "this action requires human approval, which was not "
-                            f"granted ({decision.action})"
+                            f"granted for it ({decision.action})"
                         ),
                         error_class="policy",
                     )

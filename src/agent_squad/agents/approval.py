@@ -20,6 +20,7 @@ from typing import Any
 
 from ..config import ApprovalConfig
 from ..models.message import MessageKind, make_message
+from ..security.approval import ApprovalBinding, ApprovalGrant
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 
@@ -48,13 +49,28 @@ class ApprovalBroker:
         task_id: str | None = None,
         risk: str = "medium",
         sender: str = "supervisor",
-    ) -> bool:
-        """Request approval and wait for the decision.  Returns the decision.
+        workspace: str = "",
+        contract_hash: str = "",
+        request_version: int = 1,
+        ttl_s: float | None = None,
+    ) -> ApprovalGrant:
+        """Request approval and wait for the decision.
 
         ``sender`` is the identity of the agent asking for the approval.  It
         must be a registered actor, or the bus will refuse the message --
         which is why the worker registers its identity before it starts.
+
+        The returned grant is bound to the exact action, arguments,
+        workspace and request version.  If the agent later asks for a
+        different action, the grant does not authorise it.
         """
+        binding = ApprovalBinding(
+            action=action,
+            arguments=tuple(arguments or ()),
+            workspace=workspace,
+            contract_hash=contract_hash,
+            request_version=request_version,
+        )
         if self.auto_approve:
             self.log.append(
                 EventType.HUMAN_APPROVAL,
@@ -64,9 +80,17 @@ class ApprovalBroker:
                     "action": action,
                     "status": "auto_approved",
                     "rationale": rationale,
+                    "binding": binding.to_dict(),
                 },
             )
-            return True
+            return ApprovalGrant(
+                approval_id="auto",
+                binding=binding,
+                approved=True,
+                decided_by="auto-approve",
+                reason="the approval broker is configured to auto-approve",
+                expires_at=None if ttl_s is None else time.time() + ttl_s,
+            )
 
         approval_id = self.state.create_approval(
             self.run_id,
@@ -75,6 +99,8 @@ class ApprovalBroker:
             arguments=arguments or [],
             risk=risk,
             task_id=task_id,
+            binding=binding.to_dict(),
+            ttl_s=ttl_s,
         )
         self.requested.append(approval_id)
         # Remember who asked, so the decision can be addressed back to them.
@@ -108,7 +134,7 @@ class ApprovalBroker:
             record = self.state.get_approval(approval_id)
             if record is not None and record["status"] in ("approved", "denied"):
                 await self._publish_decision(record, task_id)
-                return record["status"] == "approved"
+                return self._grant_from(record, binding, ttl_s)
             await asyncio.sleep(self.poll_interval_s)
 
         self.log.append(
@@ -121,7 +147,34 @@ class ApprovalBroker:
                 "status": "timed_out",
             },
         )
-        return False
+        return ApprovalGrant(
+            approval_id=approval_id,
+            binding=binding,
+            approved=False,
+            decided_by="",
+            reason="the approval timed out",
+        )
+
+    def _grant_from(
+        self,
+        record: dict,
+        binding: ApprovalBinding,
+        ttl_s: float | None,
+    ) -> ApprovalGrant:
+        """Turn a stored decision into a bound grant."""
+        approved = record.get("status") == "approved"
+        expires_at = None
+        if approved and ttl_s is not None:
+            expires_at = time.time() + ttl_s
+        stored = ApprovalBinding.from_dict(record.get("binding"))
+        return ApprovalGrant(
+            approval_id=str(record.get("approval_id") or ""),
+            binding=stored if stored.action else binding,
+            approved=approved,
+            decided_by=str(record.get("decided_by") or ""),
+            reason=str(record.get("reason") or ""),
+            expires_at=expires_at,
+        )
 
     async def _publish_decision(self, record: dict, task_id: str | None) -> None:
         """Publish the human's decision as a typed message.
