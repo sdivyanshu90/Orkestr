@@ -310,6 +310,7 @@ dashboard/               # optional React + React Flow web dashboard
 | [`docs/local-benchmark-results.md`](docs/local-benchmark-results.md) | Eight real local checkpoints driving the agent workflow |
 | [`docs/local-inference-results.md`](docs/local-inference-results.md) | Fixed-score inference probes on RTX 3050 and a CPU baseline |
 | [`docs/local-benchmark-methodology.md`](docs/local-benchmark-methodology.md) | Local hardware, workload, scoring and measurement limits |
+| [`docs/roadmap.md`](docs/roadmap.md) | Prioritized roadmap toward 9.5+, with measurable release gates |
 | [`docs/improvement-audit.md`](docs/improvement-audit.md) | The gap analysis: what is missing, why it matters, what to do first |
 | [`docs/limitations.md`](docs/limitations.md) | What this system does not do |
 | [`docs/implementation-walkthrough.md`](docs/implementation-walkthrough.md) | A guided tour of the code, end to end |

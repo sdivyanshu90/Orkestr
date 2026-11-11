@@ -13,6 +13,11 @@ The list below is what survived that process.
 
 ---
 
+**Current implementation priorities:** [Roadmap toward 9.5+](roadmap.md). The
+roadmap incorporates the measured local-model results and makes request-level
+verification and resource cleanup the first release gates. This audit retains
+historical evidence and should not be read as the current delivery order.
+
 ## 1. The summary table
 
 | # | Gap | Severity | Blocks the research question? |
@@ -43,7 +48,12 @@ The list below is what survived that process.
 
 ## 2. The two critical gaps
 
-### 2.1 No latency-bearing provider
+### 2.1 No latency-bearing provider — historical gap, closed
+
+The local-model adapter and measured runs now close provider availability. The
+remaining gap is controlled timing, full accounting and real-repository
+evaluation; see [R1 and R3 in the roadmap](roadmap.md). The analysis below
+describes the earlier mock-only state.
 
 **Evidence.** `agents/benchmark/harness.py` always constructs a
 `MockProvider`. `docs/benchmark-results.md` §7 states the consequence: the

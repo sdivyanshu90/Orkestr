@@ -80,6 +80,7 @@ class IntegrationResult:
     rejected: list[dict[str, Any]] = field(default_factory=list)
     workspace: str | None = None
     commit: str | None = None
+    base_revision: str = ""
     check_output: str = ""
     error: str | None = None
 
@@ -96,5 +97,6 @@ class IntegrationResult:
             "rejected": list(self.rejected),
             "workspace": self.workspace,
             "commit": self.commit,
+            "base_revision": self.base_revision,
             "error": self.error,
         }

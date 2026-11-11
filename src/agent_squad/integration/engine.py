@@ -132,9 +132,11 @@ class IntegrationEngine:
         task_id: str | None = None,
         run_checks: bool = True,
         dependencies: dict[str, tuple[str, ...]] | None = None,
+        keep_workspace: bool = False,
     ) -> IntegrationResult:
         """Apply the patches to a fresh integration worktree and verify them."""
         result = IntegrationResult(passed=False)
+        result.base_revision = base_revision
         workspace: Worktree | None = None
         try:
             workspace = self.worktrees.create(task_id=task_id, base_revision=base_revision)
@@ -267,6 +269,10 @@ class IntegrationEngine:
         finally:
             keep = self.config.workspace.keep_worktrees_on_success
             if not result.passed:
+                keep = True
+            if keep_workspace:
+                # The caller needs to inspect the combined candidate (the
+                # contract gate judges it), so it is left in place.
                 keep = True
             if not keep:
                 self.worktrees.remove(workspace)

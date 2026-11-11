@@ -29,10 +29,12 @@ from .dag.graph import TaskGraph
 from .integration.engine import IntegrationEngine
 from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
+from .models.contract import ContractVerdict, RequestContract
 from .models.run import RunStatus, RunSummary, StrategyDecision
 from .models.task import TaskStatus
 from .observe.events import StructuredLogger
 from .observe.tracing import Tracer
+from .planning.contract import build_contract
 from .planning.inspector import RepositoryInspector
 from .planning.planner import PlanRequest, PlanResult, build_planner
 from .providers.base import ModelProvider
@@ -44,6 +46,7 @@ from .store.db import Database
 from .store.events import EventLog, EventType
 from .store.state import StateStore
 from .strategy.selector import StrategySelector
+from .verification.contract_gate import ContractGate
 from .verification.gate import VerificationGate
 from .workspace.worktree import WorktreeManager
 
@@ -96,6 +99,8 @@ class RunOutcome:
     started_at: _dt.datetime | None = None
     finished_at: _dt.datetime | None = None
     warnings: list[str] = field(default_factory=list)
+    contract: ContractVerdict | None = None
+    """The acceptance judgement against the request contract, if one was made."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +110,7 @@ class RunOutcome:
             "decision": self.decision.model_dump(mode="json") if self.decision else None,
             "tasks": {k: v.to_dict() for k, v in self.outcomes.items()},
             "integration": self.integration.to_dict() if self.integration else None,
+            "contract": self.contract.to_dict() if self.contract else None,
             "warnings": list(self.warnings),
         }
 
@@ -292,19 +298,31 @@ class Orchestrator:
             injection_findings=len(context.injection_findings),
         )
 
+        # ---- the contract comes first, and it comes from the owner ------
+        contract = build_contract(objective, request_spec, description=description)
+        self.log.append(
+            EventType.RUN_CREATED,
+            run_id=self.config.run_id,
+            payload={
+                "contract": contract.to_dict(),
+                "contract_hash": contract.contract_hash,
+            },
+        )
+
         # ---- plan -------------------------------------------------------
         planner = build_planner(self.config, self.provider)
         with self.tracer.span("plan", run_id=self.config.run_id):
             request = PlanRequest(
-            run_id=self.config.run_id,
-            objective=objective,
-            description=description,
-            repo_path=self.config.repo_path,
-            base_revision=self.worktrees.head_revision()
-            if self.worktrees.has_commits()
-            else None,
-            context=context,
+                run_id=self.config.run_id,
+                objective=objective,
+                description=description,
+                repo_path=self.config.repo_path,
+                base_revision=self.worktrees.head_revision()
+                if self.worktrees.has_commits()
+                else None,
+                context=context,
                 request_spec=request_spec,
+                contract=contract,
             )
             plan = await planner.plan(request)
         warnings.extend(plan.warnings)
@@ -418,9 +436,19 @@ class Orchestrator:
         # ---- integrate ----------------------------------------------------
         integration: IntegrationResult | None = None
         bundle: str | None = None
+        verdict = None
         if integrate:
             with self.tracer.span("integration", run_id=self.config.run_id):
-                integration, bundle = await self._integrate(graph, summary)
+                integration, bundle = await self._integrate(
+                    graph,
+                    summary,
+                    keep_workspace=bool(contract.required_outcomes),
+                )
+            verdict = await self._judge_contract(contract, integration)
+            if integration is not None and integration.workspace and verdict is not None:
+                # The candidate has been judged; the staging worktree is no
+                # longer needed.
+                self.worktrees.remove_path(integration.workspace)
 
         finished_at = _dt.datetime.now(_dt.UTC)
         # The repository may have moved on since the artifacts were produced
@@ -452,6 +480,7 @@ class Orchestrator:
         return RunOutcome(
             run_id=self.config.run_id,
             status=summary.status,
+            contract=verdict,
             summary=summary,
             decision=decision,
             plan=plan,
@@ -465,8 +494,52 @@ class Orchestrator:
 
     # ----------------------------------------------------------- integration
 
+    async def _judge_contract(
+        self, contract: RequestContract, integration: IntegrationResult | None
+    ) -> ContractVerdict | None:
+        """Judge the run against its contract, on the *final* tree.
+
+        This is the acceptance boundary.  It runs after integration, against
+        the combined candidate, and it evaluates every required outcome
+        against the base tree as well — so an outcome that was already true
+        before the work started cannot be mistaken for evidence that the
+        request was satisfied.
+        """
+        if integration is None or not integration.workspace:
+            return None
+        candidate = Path(integration.workspace)
+        if not candidate.exists():
+            return None
+
+        # The base tree: the repository as it was before any work.
+        base = self.worktrees.create(task_id=None, base_revision=integration.base_revision or None)
+        try:
+            gate = ContractGate(self.config, self.state, self.log)
+            candidate_hash = self.worktrees.tree_of(integration.commit or "HEAD")
+            verdict = await gate.verify(
+                contract,
+                base_tree=base.path,
+                candidate_tree=candidate,
+                base_revision=integration.base_revision,
+                candidate_tree_hash=candidate_hash,
+            )
+        finally:
+            self.worktrees.remove(base)
+        self.logger.info(
+            "contract judged",
+            outcome=verdict.outcome.value,
+            established=len(verdict.established),
+            pre_satisfied=len(verdict.pre_satisfied),
+            not_satisfied=len(verdict.not_satisfied),
+        )
+        return verdict
+
     async def _integrate(
-        self, graph: TaskGraph, summary: RunSummary
+        self,
+        graph: TaskGraph,
+        summary: RunSummary,
+        *,
+        keep_workspace: bool = False,
     ) -> tuple[IntegrationResult | None, str | None]:
         patches: list[PatchArtifact] = []
         for state in self.state.list_task_states(self.config.run_id):
@@ -497,7 +570,22 @@ class Orchestrator:
                     )
                 )
         if not patches:
-            return None, None
+            # No patches is not "nothing to judge": it is the no-op case, and
+            # the contract gate must still see the candidate tree so that a
+            # pre-satisfied outcome is reported as *inconclusive* rather than
+            # as success.
+            base = self.worktrees.head_revision() if self.worktrees.has_commits() else ""
+            engine = IntegrationEngine(
+                config=self.config, worktrees=self.worktrees, log=self.log
+            )
+            result = await engine.integrate(
+                [],
+                base_revision=base,
+                run_id=self.config.run_id,
+                keep_workspace=keep_workspace,
+            )
+            bundle = engine.build_patch_bundle([], base_revision=base)
+            return result, bundle
 
         # Patches must be applied in dependency order: a dependent task's
         # patch was computed against its dependency's head.
@@ -512,6 +600,7 @@ class Orchestrator:
             base_revision=base,
             run_id=self.config.run_id,
             dependencies=dependencies,
+            keep_workspace=keep_workspace,
         )
         bundle = engine.build_patch_bundle(patches, base_revision=base)
         bundle_path = self.paths.root / "patch-bundle.diff"

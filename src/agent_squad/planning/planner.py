@@ -30,6 +30,7 @@ from pydantic import ValidationError as PydanticValidationError
 from ..config import RunConfig
 from ..dag.graph import TaskGraph
 from ..errors import ValidationError
+from ..models.contract import RequestContract
 from ..models.task import (
     AcceptanceCriterion,
     Budget,
@@ -135,6 +136,12 @@ class PlanRequest(BaseModel):
     base_revision: str | None = None
     context: RepoContext | None = None
     request_spec: dict[str, Any] | None = None
+    contract: RequestContract | None = None
+    """The owner's immutable requirements, when there are any.
+
+    A plan may *add* supplementary checks; it may not drop or weaken a
+    required one.  The check is enforced after the plan is built.
+    """
 
 
 class PlanResult(BaseModel):
@@ -264,6 +271,7 @@ class RuleBasedPlanner(BasePlanner):
             tasks=tasks, briefs=briefs, rationale=rationale, warnings=warnings, planner=self.name
         )
         validate_plan(result, max_delegation_depth=0)
+        enforce_contract(result, request.contract)
         return result
 
 
@@ -532,6 +540,37 @@ def validate_plan(result: PlanResult, *, max_delegation_depth: int = 2) -> list[
                 "assignable to an LLM agent"
             )
     return warnings
+
+
+def enforce_contract(
+    result: PlanResult, contract: RequestContract | None
+) -> list[str]:
+    """Refuse a plan that drops or weakens a required outcome.
+
+    The contract is the owner's statement of what must be true.  A plan may
+    add checks — that makes it stronger — but it may not remove one, because
+    a plan is proposed by the same kind of component that does the work.
+
+    Returns the warnings raised by the check.
+    """
+    if contract is None or not contract.required_outcomes:
+        return []
+    planned = {
+        criterion.id
+        for task in result.tasks
+        for criterion in task.acceptance_criteria
+    }
+    missing = [
+        c.id for c in contract.required_outcomes if c.id not in planned
+    ]
+    if missing:
+        raise ValidationError(
+            "the plan drops required outcomes from the request contract: "
+            + ", ".join(missing)
+            + ". A plan may add checks but may not remove a required one.",
+            missing=missing,
+        )
+    return []
 
 
 def build_planner(run_config: RunConfig, provider: Any) -> BasePlanner:

@@ -183,10 +183,13 @@ The full, evidence-backed analysis is in
 [`docs/improvement-audit.md`](docs/improvement-audit.md). Ordered by how much
 they limit the project's claims.
 
-1. **No latency-bearing provider.** The speed-up half of the research
-   question is untested. *Blocker: requires a paid API or a local model.*
-   The `ModelProvider` protocol already abstracts this; the missing piece is
-   a latency-injecting wrapper, and the orchestrator needs no changes.
+1. **Controlled real-model evaluation remains open.** Eight local checkpoints
+   have now been measured (62 completed workflow trials, 2 cancellations and
+   45 direct GPU/CPU requests). These are small synthetic workloads with weak
+   planner-generated criteria and a documented residual-server timing limitation.
+   They do not establish isolated speedups or real-repository coding reliability.
+   See [the measured results](docs/local-benchmark-results.md) and
+   [the roadmap](docs/roadmap.md).
 2. **No adversarial task fixtures.** Every fixture is designed to succeed,
    so the verified completion rate cannot discriminate between strategies.
    The discriminating experiment is the one where the single-agent strategy
@@ -220,13 +223,20 @@ they limit the project's claims.
 
 ## Next steps
 
+**Current priority:** follow [the roadmap toward 9.5+](docs/roadmap.md). It
+places immutable request-level verification, owned-process cleanup, complete
+accounting and enforced isolation ahead of feature expansion. The lists below
+are earlier backlog context, not the current implementation order.
+
 ### Immediate (highest value)
 1. Add adversarial fixtures where a plausible decomposition yields a
    plausible but incorrect result, so the verified completion rate can
    actually discriminate. This needs no external resources and unblocks the
    completion-rate half of the research question.
-2. Add a latency-injecting provider wrapper and re-run the benchmark. This
-   is the only way to answer the latency half.
+2. Establish controlled timing and complete planner/worker/retry accounting,
+   then evaluate pinned real-repository tasks with independent acceptance checks.
+   A latency-injecting provider can supplement real measurements for controlled
+   experiments; it is not the only way to evaluate latency.
 3. Record the selector's predicted speed-up next to the observed one, and
    fit the coordination constants to the difference.
 

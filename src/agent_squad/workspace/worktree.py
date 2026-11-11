@@ -133,15 +133,24 @@ class WorktreeManager:
 
     def remove(self, worktree: Worktree, *, force: bool = True) -> None:
         """Remove a worktree and prune its administrative files."""
+        self.remove_path(worktree.path, force=force)
+
+    def remove_path(self, path: str | Path, *, force: bool = True) -> None:
+        """Remove a worktree by path.
+
+        The integration engine and the orchestrator both hold *paths* to
+        worktrees they did not create themselves, so removing by path is a
+        first-class operation rather than an afterthought.
+        """
+        target = Path(path)
         git(
-            ["worktree", "remove", "--force" if force else "--", str(worktree.path)],
+            ["worktree", "remove", "--force" if force else "--", str(target)],
             cwd=self.repo_path,
             check=False,
         )
-        if worktree.path.exists():
-            shutil.rmtree(worktree.path, ignore_errors=True)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
         git(["worktree", "prune"], cwd=self.repo_path, check=False)
-        self._created.discard(worktree.id)
 
     def remove_all(self) -> None:
         git(["worktree", "remove", "--force", "--", str(self.root)], cwd=self.repo_path, check=False)
