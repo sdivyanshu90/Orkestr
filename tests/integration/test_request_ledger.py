@@ -274,6 +274,38 @@ async def test_a_successful_response_without_usage_is_null_not_measured_zero(ser
 
 
 @pytest.mark.integration
+async def test_endpoint_reported_timings_are_recorded_distinctly(server) -> None:
+    recorder, base_url = server
+    payload = completion(12, 6)
+    payload["timings"] = {"prompt_ms": 120.0, "predicted_ms": 80.0}
+    payload["agent_squad_timings"] = {
+        "tool_s": 0.25,
+        "verification_s": 0.5,
+        "teardown_s": 0.1,
+    }
+    recorder.push(200, payload)
+
+    ledger = RequestLedger()
+    provider = OpenAICompatProvider(
+        model="recording-model", base_url=f"{base_url}/v1", ledger=ledger
+    )
+    try:
+        await provider.complete(make_request(phase="worker"))
+    finally:
+        await provider.aclose()
+
+    (record,) = ledger.records
+    assert recorder.count == 1
+    assert record.prompt_s == pytest.approx(0.12)
+    assert record.decode_s == pytest.approx(0.08)
+    assert record.tool_s == pytest.approx(0.25)
+    assert record.verification_s == pytest.approx(0.5)
+    assert record.teardown_s == pytest.approx(0.1)
+    assert record.queue_s is None
+    assert record.load_s is not None
+
+
+@pytest.mark.integration
 async def test_anthropic_failure_is_terminal_and_reconciles(server) -> None:
     recorder, base_url = server
     recorder.push(429, {"error": "rate limited"})

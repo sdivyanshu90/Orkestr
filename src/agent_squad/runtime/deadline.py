@@ -303,11 +303,14 @@ class RunDeadline:
             )
 
     def summary(self) -> dict[str, object]:
+        # Narrow the optional once, so the rounded value is a float rather
+        # than ``float | None`` inside the conditional expression.
+        remaining = self.remaining()
         return {
             "total_s": self.total_s,
             "reserve_s": self.reserve_s,
             "elapsed_s": round(self.elapsed(), 3),
-            "remaining_s": None if self.remaining() is None else round(self.remaining(), 3),
+            "remaining_s": None if remaining is None else round(remaining, 3),
             "state": self.state().value,
             "phase": self.observed_phase,
         }
@@ -407,7 +410,13 @@ class RunScope:
         if self.gate is not None:
             self.gate.enter_sync(phase)
 
-    def block_sync(self, phase: str, *, deadline: RunDeadline | None = None) -> None:
+    def block_sync(
+        self,
+        phase: str,
+        *,
+        deadline: RunDeadline | None = None,
+        cancellation: asyncio.Event | None = None,
+    ) -> None:
         """Announce a synchronous phase, bounding a blocking gate.
 
         The gate runs in a daemon thread which is joined with the run's
@@ -418,7 +427,9 @@ class RunScope:
         The join is done in slices so that a cancellation is acknowledged
         promptly rather than after the phase's whole remaining budget: the
         thread cannot be interrupted, but the *run* does not have to keep
-        waiting for it.
+        waiting for it.  ``cancellation`` is accepted explicitly because a
+        caller that owns the run's token (the scheduler) must be able to
+        pass it even when the ambient scope was not given one.
         """
         if self.gate is None:
             return
@@ -436,9 +447,9 @@ class RunScope:
         )
         thread.start()
         end = time.monotonic() + max(0.0, budget)
-        cancellation = self.cancellation
+        token = cancellation if cancellation is not None else self.cancellation
         while thread.is_alive():
-            if cancellation is not None and cancellation.is_set():
+            if token is not None and token.is_set():
                 return
             left = end - time.monotonic()
             if left <= 0:
@@ -618,7 +629,9 @@ async def run_phase(
             # observed it and is re-raised unchanged.
             return task.result()
         task.cancel()
-        acknowledged, _pending = await asyncio.wait(
+        # A distinct name: this wait observes a different set than the
+        # first one, and reusing the name would widen the inferred type.
+        acknowledged, _ack_pending = await asyncio.wait(
             {task}, timeout=CANCELLATION_ACK_S
         )
         inner: BaseException | None = None

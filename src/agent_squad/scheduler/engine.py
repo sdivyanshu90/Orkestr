@@ -47,6 +47,7 @@ from ..planning.brief import TaskBrief
 from ..runtime.deadline import (
     DeadlineExceeded,
     Phase,
+    RunDeadline,
     current_run_scope,
     record_deadline_summary,
     run_phase,
@@ -104,7 +105,7 @@ class Scheduler:
     base_revision: str | None = None
     tracer: Any = None
     logger: Any = None
-    deadline: Any = None
+    deadline: RunDeadline | None = None
     """The run's absolute deadline, if it has one."""
     _started_at: Any = None
     _task_heads: dict[str, str] = field(default_factory=dict)
@@ -686,7 +687,11 @@ class Scheduler:
         # run gives back what it owns.  The phase is announced through the
         # synchronous seam, which is bounded by the run's remaining budget,
         # so a stuck removal cannot keep the run alive.
-        current_run_scope().block_sync(Phase.TEARDOWN.value, deadline=self.deadline)
+        current_run_scope().block_sync(
+            Phase.TEARDOWN.value,
+            deadline=self.deadline,
+            cancellation=self.cancellation,
+        )
         path = getattr(result, "worktree_path", None)
         if not path:
             return
