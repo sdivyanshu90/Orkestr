@@ -363,7 +363,7 @@
     },
     "M2": {
       "decision": "INCONCLUSIVE",
-      "implementation_status": "in progress",
+      "implementation_status": "complete",
       "blocked_on": "an independent reviewer must reproduce the installation, verdicts, schema checks, recovery and metric generation on a clean supported machine",
       "reviewer": null,
       "reviewed_at": null,
@@ -387,6 +387,14 @@
         {
           "location": "tests/unit/test_schema_migration.py",
           "description": "migration from an older schema, idempotent re-run"
+        },
+        {
+          "location": ".github/workflows/ci.yml",
+          "description": "the CI matrix: 3.11-3.13, hash-locked install, ruff, mypy and the suite"
+        },
+        {
+          "location": "docs/reproduction.md",
+          "description": "the clean-machine reproduction procedure, including the unsupported-platform rule"
         }
       ],
       "counterexamples": []
