@@ -29,7 +29,12 @@ from .dag.graph import TaskGraph
 from .integration.engine import IntegrationEngine
 from .integration.patch import IntegrationResult, PatchArtifact
 from .models.artifact import ArtifactKind
-from .models.contract import ContractVerdict, RequestContract
+from .models.contract import (
+    ContractVerdict,
+    OutcomeState,
+    RequestContract,
+    VerificationOutcome,
+)
 from .models.run import RunStatus, RunSummary, StrategyDecision
 from .models.task import TaskStatus
 from .observe.events import StructuredLogger
@@ -50,6 +55,7 @@ from .store.state import StateStore
 from .strategy.selector import StrategySelector
 from .verification.contract_gate import ContractGate
 from .verification.gate import VerificationGate
+from .verification.protected import ProtectedMaterial
 from .workspace.worktree import WorktreeManager
 
 SUPERVISOR = "supervisor"
@@ -190,6 +196,9 @@ class Orchestrator:
         self._role_providers: dict[str, ModelProvider] = {}
         self._record_exchanges = record_exchanges
         self.recorder: Any = None
+        self.protected_paths: tuple[str, ...] = tuple(
+            config.protected_material_paths or ()
+        )
 
     # ------------------------------------------------------------ providers
 
@@ -544,6 +553,26 @@ class Orchestrator:
                 base_revision=integration.base_revision,
                 candidate_tree_hash=candidate_hash,
             )
+
+            # The protected material: the files the worker was not allowed
+            # to touch.  If one changed, the evidence is void.
+            material = ProtectedMaterial(paths=self.protected_paths).capture(base.path)
+            tamper = material.check(candidate)
+            if any(v.state is OutcomeState.NOT_SATISFIED for v in tamper):
+                verdict = ContractVerdict(
+                    outcome=VerificationOutcome.REJECTED,
+                    contract_hash=verdict.contract_hash,
+                    base_revision=verdict.base_revision,
+                    candidate_tree=verdict.candidate_tree,
+                    verifier_version=verdict.verifier_version,
+                    verdicts=verdict.verdicts + tamper,
+                    commands=verdict.commands,
+                    detail=(
+                        "the run modified protected verification material, so the "
+                        "evidence is void: "
+                        + "; ".join(v.detail for v in tamper if v.detail)
+                    ),
+                )
         finally:
             self.worktrees.remove(base)
         self.logger.info(

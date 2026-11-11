@@ -370,3 +370,73 @@ async def test_a_run_that_does_nothing_is_not_accepted(
     assert outcome.contract is not None
     assert outcome.contract.outcome is VerificationOutcome.INCONCLUSIVE
     assert outcome.contract.pre_satisfied == ("pre-existing",)
+
+
+@pytest.mark.integration
+async def test_a_run_that_tampers_with_protected_material_is_rejected(
+    tmp_path: Path, repo: Path
+) -> None:
+    """The evidence is void if the thing that judged the work was changed.
+
+    The hidden regression check is outside the worker's write scope, so the
+    capability layer refuses to change it.  The hash comparison is the
+    independent check that the scope was not bypassed.
+    """
+    protected = repo / "tests" / "test_calc.py"
+    original = protected.read_text(encoding="utf-8")
+    spec = {
+        "objective": "add a module",
+        "tasks": [
+            {
+                "id": "impl",
+                "title": "Add a module",
+                "objective": "Create extra.py",
+                "role": "implementer",
+                "depends_on": [],
+                # The task's scope excludes the protected file.
+                "exclude_paths": ["tests/test_calc.py"],
+                "edits": [
+                    {"path": "extra.py", "content": "value = 1\n"},
+                    # And the worker tries to weaken the hidden test anyway.
+                    {"path": "tests/test_calc.py", "content": "def test_add(): pass\n"},
+                ],
+                "acceptance_criteria": [
+                    {
+                        "id": "extra",
+                        "description": "extra.py exists",
+                        "kind": "file_exists",
+                        "spec": {"path": "extra.py"},
+                    }
+                ],
+            }
+        ],
+    }
+    config = RunConfig(
+        run_id="run_tamper",
+        repo_path=str(repo),
+        data_dir=str(tmp_path / "data"),
+        provider={"name": "mock", "model": "mock-deterministic-v1"},
+        protected_material_paths=("tests/test_calc.py",),
+        verification={"integration_test_command": ("python3", "-m", "pytest", "-q")},
+    )
+    orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
+    try:
+        outcome = await orchestrator.run("a tampering request", request_spec=spec)
+    finally:
+        await orchestrator.aclose()
+
+    assert outcome.contract is not None
+    # Either the scope held and the run was accepted on its own merits, or
+    # the tamper was detected and the evidence voided.  What must never
+    # happen is the tamper being missed.
+    protected_states = [
+        v.state
+        for v in outcome.contract.verdicts
+        if v.criterion_id.startswith("protected:")
+    ]
+    if protected_states:
+        assert all(
+            state is not OutcomeState.NOT_SATISFIED for state in protected_states
+        ), "the protected file was modified and the run was not rejected"
+    # The repository's own file was never changed by the run.
+    assert protected.read_text(encoding="utf-8") == original

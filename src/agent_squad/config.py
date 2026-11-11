@@ -213,6 +213,17 @@ class RunConfig(_Base):
             "limit while never breaching one."
         ),
     )
+    protected_material_paths: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Repository paths the worker must not be able to change -- the "
+            "hidden regression checks, the baseline tests, the configuration. "
+            "They are excluded from the write scope and their content hashes "
+            "are checked before the verdict is issued.  This is distinct from "
+            "ApprovalConfig.protected_paths, which means 'writes here always "
+            "need a human'."
+        ),
+    )
     isolation_profile: str = Field(
         default="development",
         description=(
