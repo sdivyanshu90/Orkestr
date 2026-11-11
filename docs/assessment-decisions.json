@@ -346,7 +346,7 @@
     "M1": {
       "decision": "INCONCLUSIVE",
       "implementation_status": "partial",
-      "blocked_on": "the qualification timing sample must be rerun with verified process ownership and a recorded resource baseline; the historical sweep carried a caveat and is retained with it",
+      "blocked_on": "the qualification sample must be taken on a quiet host with the full model set; the historical sweep is retained with its residual-server caveat and is not qualification evidence",
       "reviewer": null,
       "reviewed_at": null,
       "evidence": [
@@ -357,6 +357,10 @@
         {
           "location": "benchmarks/results/suite-full-3trials.json",
           "description": "the raw records, retained rather than deleted"
+        },
+        {
+          "location": "benchmarks/results/local-clean-timing.json",
+          "description": "a timing sample taken with a durable registry: every server registered while alive, and pid-gone plus port-closed verified after each model"
         }
       ],
       "counterexamples": []

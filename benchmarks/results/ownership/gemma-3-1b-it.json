@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "kind": "model_server",
+      "identifier": "llama-server:gemma-3-1b-it:35375",
+      "pid": 341606,
+      "pgid": 341606,
+      "path": null,
+      "created_at": 1794403071.8294477,
+      "reclaimed": true
+    }
+  ]
+}

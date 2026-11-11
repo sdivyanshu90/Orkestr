@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "purpose": "A small timing sample taken with verified process ownership. It demonstrates the mechanism; it is not large enough to be qualification evidence under M1, and it does not cover the models that are no longer on disk.",
+  "hardware": {
+    "free_vram_mb": 3641,
+    "total_ram_mb": 9374,
+    "recorded_at": "2026-11-11T13:17:40Z"
+  },
+  "catalogue": [
+    {
+      "id": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "filename": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      "size_mb": 1129,
+      "quant": "Q4_K_M",
+      "present": true
+    },
+    {
+      "id": "qwen3-1.7b",
+      "family": "Qwen",
+      "filename": "Qwen3-1.7B-Q4_K_M.gguf",
+      "size_mb": 1110,
+      "quant": "Q4_K_M",
+      "present": false
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-1.5b",
+      "family": "DeepSeek",
+      "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+      "size_mb": 1117,
+      "quant": "Q4_K_M",
+      "present": false
+    },
+    {
+      "id": "gemma-3-1b-it",
+      "family": "Gemma",
+      "filename": "gemma-3-1b-it-Q4_K_M.gguf",
+      "size_mb": 819,
+      "quant": "Q4_K_M",
+      "present": true
+    },
+    {
+      "id": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "filename": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "size_mb": 808,
+      "quant": "Q4_K_M",
+      "present": true
+    },
+    {
+      "id": "phi-4-mini-instruct",
+      "family": "Phi",
+      "filename": "Phi-4-mini-instruct-Q4_K_M.gguf",
+      "size_mb": 2409,
+      "quant": "Q4_K_M",
+      "present": false
+    },
+    {
+      "id": "minimax-m1-distill-qwen3-4b",
+      "family": "MiniMax",
+      "filename": "Qwen3-4B-2507-Thinking-Minimax-M1-Distill-Uncensored.Q4_K_M.gguf",
+      "size_mb": 2497,
+      "quant": "Q4_K_M",
+      "present": false
+    },
+    {
+      "id": "kimi-k3-distill-qwen3.5-9b",
+      "family": "Kimi",
+      "filename": "Qwen3.5-9B-Kimi-k3-Distilled.Q4_K_M.gguf",
+      "size_mb": 5780,
+      "quant": "Q4_K_M",
+      "present": false
+    }
+  ],
+  "models_measured": [
+    "qwen2.5-coder-1.5b-instruct",
+    "gemma-3-1b-it",
+    "llama-3.2-1b-instruct"
+  ],
+  "repetitions": 2,
+  "prompts": [
+    "Return only the integer result of 17 * 23.",
+    "Return only the word yes or no: is 9 prime?",
+    "Return only a JSON object with key name and the value Ada."
+  ],
+  "results": [
+    {
+      "model": "qwen2.5-coder-1.5b-instruct",
+      "family": "Qwen",
+      "quant": "Q4_K_M",
+      "size_mb": 1129,
+      "context_size": 2048,
+      "server_args": [
+        "--parallel",
+        "1",
+        "--ctx-size",
+        "2048"
+      ],
+      "load_s": 6.032,
+      "gpu_layers": 999,
+      "port": 58341,
+      "pid": 341582,
+      "samples": [
+        {
+          "repetition": 0,
+          "prompt_index": 0,
+          "cold": true,
+          "warmup_s": 0.5584,
+          "duration_s": 0.3498,
+          "prompt_tokens": 43,
+          "completion_tokens": 4,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.5584,
+          "duration_s": 0.201,
+          "prompt_tokens": 42,
+          "completion_tokens": 2,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.5584,
+          "duration_s": 1.1435,
+          "prompt_tokens": 42,
+          "completion_tokens": 14,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 0,
+          "cold": false,
+          "warmup_s": 0.5584,
+          "duration_s": 0.3429,
+          "prompt_tokens": 43,
+          "completion_tokens": 4,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.5584,
+          "duration_s": 0.2426,
+          "prompt_tokens": 42,
+          "completion_tokens": 2,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.5584,
+          "duration_s": 1.05,
+          "prompt_tokens": 42,
+          "completion_tokens": 14,
+          "status": 200
+        }
+      ],
+      "ownership": {
+        "pid": 341582,
+        "pid_gone": true,
+        "port_closed": true,
+        "registry_clean": true,
+        "survivors": []
+      },
+      "median_s": 0.3498
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "family": "Gemma",
+      "quant": "Q4_K_M",
+      "size_mb": 819,
+      "context_size": 2048,
+      "server_args": [
+        "--parallel",
+        "1",
+        "--ctx-size",
+        "2048"
+      ],
+      "load_s": 4.013,
+      "gpu_layers": 999,
+      "port": 35375,
+      "pid": 341606,
+      "samples": [
+        {
+          "repetition": 0,
+          "prompt_index": 0,
+          "cold": true,
+          "warmup_s": 0.3812,
+          "duration_s": 0.3758,
+          "prompt_tokens": 23,
+          "completion_tokens": 5,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.3812,
+          "duration_s": 0.2846,
+          "prompt_tokens": 22,
+          "completion_tokens": 3,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.3812,
+          "duration_s": 2.1269,
+          "prompt_tokens": 22,
+          "completion_tokens": 18,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 0,
+          "cold": false,
+          "warmup_s": 0.3812,
+          "duration_s": 0.2898,
+          "prompt_tokens": 23,
+          "completion_tokens": 5,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.3812,
+          "duration_s": 0.186,
+          "prompt_tokens": 22,
+          "completion_tokens": 3,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.3812,
+          "duration_s": 0.9653,
+          "prompt_tokens": 22,
+          "completion_tokens": 18,
+          "status": 200
+        }
+      ],
+      "ownership": {
+        "pid": 341606,
+        "pid_gone": true,
+        "port_closed": true,
+        "registry_clean": true,
+        "survivors": []
+      },
+      "median_s": 0.3758
+    },
+    {
+      "model": "llama-3.2-1b-instruct",
+      "family": "Llama",
+      "quant": "Q4_K_M",
+      "size_mb": 808,
+      "context_size": 2048,
+      "server_args": [
+        "--parallel",
+        "1",
+        "--ctx-size",
+        "2048"
+      ],
+      "load_s": 9.027,
+      "gpu_layers": 999,
+      "port": 59619,
+      "pid": 341668,
+      "samples": [
+        {
+          "repetition": 0,
+          "prompt_index": 0,
+          "cold": true,
+          "warmup_s": 0.458,
+          "duration_s": 0.4963,
+          "prompt_tokens": 47,
+          "completion_tokens": 8,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.458,
+          "duration_s": 0.2301,
+          "prompt_tokens": 48,
+          "completion_tokens": 2,
+          "status": 200
+        },
+        {
+          "repetition": 0,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.458,
+          "duration_s": 0.9273,
+          "prompt_tokens": 48,
+          "completion_tokens": 14,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 0,
+          "cold": false,
+          "warmup_s": 0.458,
+          "duration_s": 0.5712,
+          "prompt_tokens": 47,
+          "completion_tokens": 8,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 1,
+          "cold": false,
+          "warmup_s": 0.458,
+          "duration_s": 0.1505,
+          "prompt_tokens": 48,
+          "completion_tokens": 2,
+          "status": 200
+        },
+        {
+          "repetition": 1,
+          "prompt_index": 2,
+          "cold": false,
+          "warmup_s": 0.458,
+          "duration_s": 0.8401,
+          "prompt_tokens": 48,
+          "completion_tokens": 14,
+          "status": 200
+        }
+      ],
+      "ownership": {
+        "pid": 341668,
+        "pid_gone": true,
+        "port_closed": true,
+        "registry_clean": true,
+        "survivors": []
+      },
+      "median_s": 0.5712
+    }
+  ],
+  "all_ownership_verified": true
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "kind": "model_server",
+      "identifier": "llama-server:llama-3.2-1b-instruct:59619",
+      "pid": 341668,
+      "pgid": 341668,
+      "path": null,
+      "created_at": 1794403081.1464224,
+      "reclaimed": true
+    }
+  ]
+}

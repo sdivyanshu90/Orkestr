@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "kind": "model_server",
+      "identifier": "llama-server:qwen2.5-coder-1.5b-instruct:58341",
+      "pid": 341582,
+      "pgid": 341582,
+      "path": null,
+      "created_at": 1794403061.0463905,
+      "reclaimed": true
+    }
+  ]
+}
