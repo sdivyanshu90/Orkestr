@@ -1,6 +1,6 @@
 
 policy_version: 1.0
-release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
 scope: Linux x86-64 (Ubuntu 24.04), Python 3.11-3.13, local providers only (mock, openai_compat, anthropic) against a locally hosted OpenAI-compatible server; single-user, single-host, local authority; no public service exposure and no distributed workers.
 status: ASSESSED
 criteria:
@@ -14,15 +14,15 @@ criteria:
       - location: src/agent_squad/verification/contract_gate.py
         sha256: 97e8a7b023f58b27cfe6ddb1b86968cc78cb8dc67e74af6e1231d6c477347af2
         description: the verdict uses the complete check result (exit code and every match predicate), not the exit code alone
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/verification/checks.py
-        sha256: cccf7893212fd61dfddad4c83bd24faddf689a9cd80ee1789202a950a2ee3bf3
+        sha256: d18f55798da353dd104b88e9a1253cfefabf2452396f37e746bf4659c0719ace
         description: every check executor records its complete verdict and the individual predicates
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/evaluation/test_adversarial_contracts.py
         sha256: f07c23306bcc1498039e76591acdab1993501fc95ab54dc43288b401de5486db
         description: negative cases across the supported check kinds, including the exit-zero output mismatch through both entry points
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples:
       - a command that exits zero while producing the wrong output was accepted by the previous implementation; the counterexample is now covered by tests/evaluation/test_adversarial_contracts.py
   C2:
@@ -33,49 +33,73 @@ criteria:
     reviewed_at: null
     evidence:
       - location: src/agent_squad/models/contract.py
-        sha256: 2b26c1f1a6f3cfd98edd6b262a2afb83bcd70d0f370eef768dcb837d9a0d66a6
+        sha256: e71297c53edfe0ff4dbbbb986fea53004516ea8f59a137fbc7375fcef5ccffb6
         description: the immutable, content-hashed request contract and its outcome vocabulary
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/planning/contract.py
-        sha256: d9991d4bce5e54fd07fb2e9f9e0f0922cace9467af026aca687caba4acb33d0a
+        sha256: 184f266b105a8a077d087f1586f287ece6eb8b0b388ba248417f82ce4e9e6097
         description: "the contract is built from the owner's declaration, never from the model's output"
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/evaluation/test_adversarial_contracts.py
         sha256: f07c23306bcc1498039e76591acdab1993501fc95ab54dc43288b401de5486db
         description: the contract cannot be weakened by a plan
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/unit/test_contract_immutability.py
+        sha256: ff905bcf601534b3d14f72d967d2c1c10bb0d7f94b01a939feddf74e9faf8a3c
+        description: a criterion id reused with different semantics is refused; an authorized revision invalidates old evidence
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   C3:
     decision: INCONCLUSIVE
-    implementation_status: in progress
+    implementation_status: complete
     blocked_on: the 300-case corpus must be complete and an independent reviewer must confirm zero false accepts with the stated confidence bound
     reviewer: null
     reviewed_at: null
     evidence:
       - location: src/agent_squad/benchmark/statistics.py
-        sha256: 3f349f6695cf6b11c0cedda4378d0e8f0ac0daa052e7b44f080480d7398e3c72
+        sha256: 63bf2fb951c4f9372bfe19664da00fc56583dfbb83820514097fdd047dfa2f87
         description: the evaluation statistics with complete denominators and clustered intervals
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/evaluation/test_adversarial_contracts.py
         sha256: f07c23306bcc1498039e76591acdab1993501fc95ab54dc43288b401de5486db
         description: the hand-written adversarial corpus the generated corpus extends
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: src/agent_squad/benchmark/corpus.py
+        sha256: f37057a54dd2743dc591634d6d2064a1eadb7f60ca060bff065ce1d062984121
+        description: "the deterministic corpus generator: 600 adversarial cases and 160 known-correct cases, each with a distinct contract"
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: benchmarks/results/corpus-20261111.json
+        sha256: 4e5885ac4a939be90e3811af7741f2d538da36e9b548cd1e775baf54ce3070ed
+        description: "the raw corpus run: 0 false accepts, exact one-sided 95% upper bound 0.498%, known-correct lower bound 98.15%"
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/evaluation/test_corpus.py
+        sha256: 0376d391371bf526cf86537e05a680c7eed3de8b0b351464ac032cd14733302c
+        description: the corpus tests, including the cosmetic-variant rejection and the always-reject control
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   C4:
     decision: INCONCLUSIVE
-    implementation_status: in progress
+    implementation_status: complete
     blocked_on: an independent reviewer must attempt deletion, rewrite and modify-then-restore tampering through every worker execution path
     reviewer: null
     reviewed_at: null
     evidence:
       - location: src/agent_squad/verification/protected.py
-        sha256: d9cf80ff3cd7745d7baea804eeee259282c11b80339594ae8eabe5ef050d8553
+        sha256: 74a88f8c42bfb756b8aa24ed0fd7475351bd63c8879bb337a43f1b3e61e97cd1
         description: protected verification material and its tamper detection
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/security/capabilities.py
         sha256: c646cc889eabe22d7f62f76cc0d3de69d1692d35238b6f49964fae43e82e5239
         description: "the capability layer that keeps write authority outside the worker's hands"
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/unit/test_protected_material.py
+        sha256: a97dac132aa47e78d6662dfd67a2459d997db73434c1758485fb5c108e6da19f
+        description: deletion, rewrite, modify-then-restore and command-path escapes refused through the real file and command tools; a selector that names an unprotected oracle is reported
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: src/agent_squad/tools/exec.py
+        sha256: 3646546e7b7d3b67db55dc947fde29971d02995d0dff5f84988f76fc96b93a6a
+        description: command writes are confined to the workspace and refused against protected or excluded paths
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   C5:
     decision: INCONCLUSIVE
@@ -87,15 +111,15 @@ criteria:
       - location: src/agent_squad/cli/main.py
         sha256: 88f86966c00deaa9b087e173fec9941a8dd2dccc0decb271a7779cbb9f49c096
         description: the CLI entry point
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/api/server.py
         sha256: 8b981da9c42f3ac88ce32dd9d77b2b8398e53c6778d26fcd779eca2e6a472aa9
         description: the HTTP API entry point
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/integration/test_dashboard_contract.py
         sha256: bcc1f224bad8a1fe3e48387f3a701e64e7ed4728131146458765e9c8a974e483
         description: the contract between the runtime and the dashboard
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   R1:
     decision: INCONCLUSIVE
@@ -105,9 +129,13 @@ criteria:
     reviewed_at: null
     evidence:
       - location: src/agent_squad/runtime/deadline.py
-        sha256: dc5ed4576cd85751d8a678fd90cb369f3d9e4b0259b80d60f3851af65be8e717
+        sha256: 3e1725b83e69c9c93aa79158f63b41f0175d92977cac17562e05ad5a83cb86b6
         description: the absolute run deadline with the teardown reserve
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/unit/test_deadline_phases.py
+        sha256: 77f0bf70b12460989db882a63b25aba2221b2e441866a20e932aebc7c42fa6c7
+        description: per-phase injection of a blocking operation and a cancellation, with the D+5s bound
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   R2:
     decision: INCONCLUSIVE
@@ -117,13 +145,21 @@ criteria:
     reviewed_at: null
     evidence:
       - location: src/agent_squad/runtime/registry.py
-        sha256: fc092e4e9c216df19be10f2b6274d2ef41d8ce05a59d032552c46e3c6f180d6d
+        sha256: 575de0792afdbb6c6e17729af99a8e763ecdc772fc7887104b43f8f89eb5e418
         description: the process and artifact registry that owns what a run starts
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/recovery/test_resource_bounds.py
         sha256: 11ab6788b393a0ebcccec98eb5b1fb515fbfdcc14731df188bd9d3e20be68807
         description: the lifecycle-cycle and resource-bound tests
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/lifecycle/test_lifecycle_matrix.py
+        sha256: de2abe4398865b95412173bd6a8ce874d8ba93ed79d694572ea674f38012169b
+        description: at least ten integrated cycles per failure category, reconciliation of a SIGKILLed owner, PID reuse, lost registry writes and retained-workspace manifests
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: src/agent_squad/orchestrator.py
+        sha256: 308d601a419643c772949f359229101acb58611e328c3742d57c2c81f7607c76
+        description: signal handling, workspace sweep and process reclamation at teardown
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   R3:
     decision: INCONCLUSIVE
@@ -133,31 +169,43 @@ criteria:
     reviewed_at: null
     evidence:
       - location: src/agent_squad/orchestrator.py
-        sha256: a3c3be7cb2497a8fd5488f106bec84cc07e2f7423c707f48d69ec45de101fdaf
+        sha256: 308d601a419643c772949f359229101acb58611e328c3742d57c2c81f7607c76
         description: ownership is acquired, heartbeated and released around every run
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/recovery.py
         sha256: 0f8f2d4a5a9d8e78c0da3774ea8785b7661194d5c857a48595e99d135bbeb26d
         description: a resume takes durable ownership too
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/recovery/test_authority_and_ownership.py
         sha256: a528325d7520b5e587f3757a5ae0f3b35e339078e2641a3efd01621225b72f57
         description: the ownership, fencing and dedup tests
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   R4:
     decision: INCONCLUSIVE
-    implementation_status: in progress
+    implementation_status: complete
     blocked_on: an independent reviewer must reconcile the ledger against a recording endpoint with injected pre- and post-usage failures
     reviewer: null
     reviewed_at: null
     evidence:
       - location: src/agent_squad/providers/ledger.py
-        sha256: 227eae444fe0536fb272f3c2ab573e0e32b8f06de19260f0a4fed66ef5eb9984
+        sha256: 38888fc809a34adf7fe65751cc4970aa5ef7411ede7e0d52b975579602a2cfdb
         description: the request ledger and its usage-provenance rules
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/unit/test_provider_ledger.py
+        sha256: ccaf07328da5a01083bcafee94e6aef65c499ff4e4eb90c453706601f9998966
+        description: terminal records for success, pre-usage failure, post-usage failure and cancellation; null-not-zero provenance; distinct timings
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/integration/test_request_ledger.py
+        sha256: 09c0e1830286f1a20c2a3f63225be489b4858d6b88460facf92de2b92b44c236
+        description: exact reconciliation against the recording endpoint through the provider path
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: src/agent_squad/providers/openai_compat.py
+        sha256: c0c1afce644d3c894ec3cb63170c2e1a01f8b5cc154dac9211b8e3448961d66c
+        description: the real provider records every attempt
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples:
-      - the ledger existed without request-path integration; it was not reachable from any provider
+      - the ledger existed without request-path integration; it is now recorded by every provider attempt, including failures and cancellations
   V1:
     decision: MISSING
     implementation_status: partial
@@ -168,11 +216,11 @@ criteria:
       - location: docs/local-benchmark-methodology.md
         sha256: 8e826a25ffd08737cccbb68745ecaf263bf42efcfbed13f73f3f69f44653eb89
         description: what the local sweep actually measured, and its limits
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: benchmarks/results/suite-full-3trials.json
         sha256: 836187b88e78269806a06cce62e2fcdb1a7b47467d5e018e4c596f9a049ba013
         description: the raw records of the 64-trial local sweep
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   V2:
     decision: MISSING
@@ -184,7 +232,7 @@ criteria:
       - location: benchmarks/results/suite-full-3trials.json
         sha256: 836187b88e78269806a06cce62e2fcdb1a7b47467d5e018e4c596f9a049ba013
         description: the raw records of the local sweep, which the contract gate later showed contained false successes
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples:
       - 11 of 16 verified runs in the local sweep made no tool call at all; the contract gate now reports such a run as inconclusive rather than accepted
   V3:
@@ -197,7 +245,7 @@ criteria:
       - location: docs/local-benchmark-results.md
         sha256: 9c3e3dcd22be7fbd0f15ee126c3cee689ee9f0d602853951101f716c085bb186
         description: the single-agent versus multi-agent comparison that was actually run, and what it does not establish
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   S1:
     decision: INCONCLUSIVE
@@ -209,15 +257,15 @@ criteria:
       - location: src/agent_squad/sandbox/containment.py
         sha256: 4bfe771eda53b78fc0bcbb86a577b6b64f874c7feea8aee996aa5eac81f10eba
         description: the bubblewrap containment backend and the probe that observes the boundary rather than assuming it
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/sandbox/limits.py
-        sha256: 83d2a9e3fde3fef4664f80b7f0fa1bbb4556dd7b1af98f2567cde5736339d66a
+        sha256: 17585d1373229041b18a21bee56b60f17b9415e16e888b0bc8fbbac7adac881d
         description: "the environment builder no longer inherits the invoking user's HOME"
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: tests/integration/test_hardened_containment.py
         sha256: 8c7cc87075154012222be81be87f606c96c1d2ee2a701a710f653fdfb5d24516
         description: "the adversarial worker-command evidence: private home, host canary, denied network endpoint, system image, orphaned descendants, and refusal when containment is unavailable"
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples:
       - "the hardened guard previously reported the private-home boundary as satisfied while the environment builder kept the invoking user's HOME; the check now inspects the real configuration and directory"
   S2:
@@ -228,13 +276,13 @@ criteria:
     reviewed_at: null
     evidence:
       - location: src/agent_squad/security/approval.py
-        sha256: 062280e4ca3c5dd3bba6b1fb710d85951d0f02ff96e845b7f44f27aea4aa8f11
+        sha256: 785c42fe859b00d178f150654377b0d7539b5f70e73a3064f8be8e4e30da4658
         description: approvals bound to the action, the workspace and the request
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: src/agent_squad/security/policy.py
-        sha256: 5bd3be3da4842087174392d974446e212ebc0772ccdcf13f3e4e28627bf7bd79
+        sha256: 9057eac322fa48cb2c1d3373df9de2cf2976969e19dbcefa8c40c653f184c8b3
         description: the policy engine that decides what a command may do
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   S3:
     decision: MISSING
@@ -244,9 +292,9 @@ criteria:
     reviewed_at: null
     evidence:
       - location: docs/security-threat-model.md
-        sha256: 671385a9e55455c0245bd8c958d135e3456c51d5f98ae86c14dcae495e1f7e2b
+        sha256: 3b7071a709d8b5881ce34778054cffa82258a59118845d5f7d3c6c64f7cf8a38
         description: the threat model the audit would be measured against
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   M1:
     decision: INCONCLUSIVE
@@ -258,11 +306,11 @@ criteria:
       - location: docs/local-benchmark-methodology.md
         sha256: 8e826a25ffd08737cccbb68745ecaf263bf42efcfbed13f73f3f69f44653eb89
         description: the timing conditions, including the residual-server caveat on the historical results
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: benchmarks/results/suite-full-3trials.json
         sha256: 836187b88e78269806a06cce62e2fcdb1a7b47467d5e018e4c596f9a049ba013
         description: the raw records, retained rather than deleted
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   M2:
     decision: INCONCLUSIVE
@@ -272,13 +320,25 @@ criteria:
     reviewed_at: null
     evidence:
       - location: pyproject.toml
-        sha256: d70be6e2ab5bd6c9c742588ceaa7fe18437b3e045ef3f36763b3aedaac64f101
+        sha256: 98039b4eab7a27770349e947411f28d060775eb38667f54bcef1fc6f173b95ae
         description: the pinned project metadata and the tool configuration
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
       - location: scripts/build_assessment.py
-        sha256: 4e979177f4c1ced7c74ed6d048dc79b2eafc3f198f1ff389d2f03eff076d1860
+        sha256: c76bd940fbced6d951261767994d60ab23fe398280e72ae0279880c729e49bab
         description: "the assessor that enforces the policy's own rules over this record"
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: requirements.lock
+        sha256: 6a98768071521b37438021556264019e2bb40418d4db58ba5a9e3ca080fda5b6
+        description: the hash-pinned dependency lock
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: src/agent_squad/store/db.py
+        sha256: d3b1449c0b3180397473f2fbd90bed7a9e499b48e1704e65d58e90e680f8cc5b
+        description: the user_version schema migration mechanism
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
+      - location: tests/unit/test_schema_migration.py
+        sha256: f2cf90b216b718c14f456315a9e5a6858d3a8e7d1a43ffc95e24e2f0942afd34
+        description: migration from an older schema, idempotent re-run
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   U1:
     decision: MISSING
@@ -290,7 +350,7 @@ criteria:
       - location: docs/limitations.md
         sha256: 98a8326ed6991dbcfcb4250f73d5660cf5ad6c388ac8c29a06e9bdbcef84b20b
         description: the section that states which qualifications this repository cannot make
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   V4:
     decision: MISSING
@@ -302,7 +362,7 @@ criteria:
       - location: docs/limitations.md
         sha256: 98a8326ed6991dbcfcb4250f73d5660cf5ad6c388ac8c29a06e9bdbcef84b20b
         description: the section that states which qualifications this repository cannot make
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
   U2:
     decision: MISSING
@@ -314,7 +374,7 @@ criteria:
       - location: docs/limitations.md
         sha256: 98a8326ed6991dbcfcb4250f73d5660cf5ad6c388ac8c29a06e9bdbcef84b20b
         description: the section that states which qualifications this repository cannot make
-        release_commit: a5918902b62f67b9071e81336a49ddd85f8c03f3
+        release_commit: 993b52031d830b6374019f207b1a2e576e9bbf39
     counterexamples: []
 raw_points: 0.0
 raw_score: 0.0
@@ -375,16 +435,16 @@ engineering_readiness:
     complete:
       - C1
       - C2
+      - C3
+      - C4
       - C5
       - R2
       - R3
+      - R4
       - S1
     in progress:
-      - C3
-      - C4
       - M2
       - R1
-      - R4
       - S2
     partial:
       - M1
@@ -399,9 +459,12 @@ engineering_readiness:
   implemented_but_not_independently_reviewed:
     - C1
     - C2
+    - C3
+    - C4
     - C5
     - R2
     - R3
+    - R4
     - S1
   criteria_lacking_evidence:
     - C1

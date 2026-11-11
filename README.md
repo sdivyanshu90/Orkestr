@@ -312,6 +312,8 @@ dashboard/               # optional React + React Flow web dashboard
 | [`docs/local-benchmark-methodology.md`](docs/local-benchmark-methodology.md) | Local hardware, workload, scoring and measurement limits |
 | [`docs/roadmap.md`](docs/roadmap.md) | Prioritized roadmap toward 9.5+, with measurable release gates |
 | [`docs/scoring-criteria.md`](docs/scoring-criteria.md) | Binding score criteria, evidence thresholds, hard caps and qualification rules |
+| [`docs/assessment-record.yaml`](docs/assessment-record.yaml) | The formal assessment: every criterion's decision, its evidence hash and its reviewer. **Read this before quoting any score.** |
+| [`docs/assessment-decisions.json`](docs/assessment-decisions.json) | The inputs to the assessor, including what each criterion is blocked on |
 | [`docs/improvement-audit.md`](docs/improvement-audit.md) | The gap analysis: what is missing, why it matters, what to do first |
 | [`docs/limitations.md`](docs/limitations.md) | What this system does not do |
 | [`docs/implementation-walkthrough.md`](docs/implementation-walkthrough.md) | A guided tour of the code, end to end |
@@ -325,10 +327,27 @@ dashboard/               # optional React + React Flow web dashboard
 ```bash
 pip install -e ".[dev]"
 pytest                       # the full suite
-pytest -m "not slow"         # skip the slow scenarios
+pytest -m "not slow"         # skip the lifecycle matrix and heavy scenarios
+pytest tests/lifecycle -q    # the R2 lifecycle matrix on its own
 pytest tests/security -v     # the security regression suite
 ruff check src tests
 ```
+
+### What the score is, and is not
+
+The project's own policy (`docs/scoring-criteria.md`) requires a **named
+independent reviewer** for any criterion to count as `PASS`, and states
+that an author reviewing their own work does not qualify. No such review
+has happened, so `docs/assessment-record.yaml` reports
+`formal_score: 0.0` with every criterion `INCONCLUSIVE` or `MISSING`.
+That is the honest number under the policy, not a claim that the
+implementation is worth zero.
+
+The record also publishes an `engineering_readiness` section, clearly
+labelled as *not* the formal score, so a reviewer can see which criteria
+are one independent reproduction away from a decision and which are
+genuinely absent (`S3`, `U1`, `U2`, `V4` — an external audit, 30–90 days
+of external usage, and a second independent team).
 
 The suite is hermetic: no network access, no paid model API, no reliance on
 wall-clock timing for correctness. Tests that measure timing assert on

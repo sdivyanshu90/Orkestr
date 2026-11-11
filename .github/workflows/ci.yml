@@ -1,0 +1,108 @@
+name: ci
+
+# The M2 criterion asks for a published CI matrix, dependency locks,
+# schema-migration and backup/restore evidence, and zero type errors on the
+# verification, state, provider and orchestration paths.  This workflow is
+# that publication: it runs the same three gates a reviewer would run by
+# hand, on every supported interpreter, plus the slow lifecycle matrix on
+# one job so the resource-control evidence is exercised too.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  quality:
+    name: py${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # The lock is hash-pinned and covers CPython 3.11-3.13 on
+      # manylinux x86_64.  Installing it with --require-hashes is the
+      # reproducibility gate: a changed artefact fails here rather than
+      # silently producing a different environment.
+      - name: Install the hash-pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps -e .
+
+      - name: Lint
+        run: python -m ruff check src tests scripts
+
+      # Zero type errors on the six trees the criterion names.  The
+      # configuration scopes mypy to exactly those trees, so a failure is
+      # always attributable.
+      - name: Type-check the critical paths
+        run: python -m mypy
+
+      - name: Run the suite
+        env:
+          AGENT_SQUAD_CORPUS_FULL: "1"
+        run: python -m pytest -q
+
+      - name: Upload the evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-py${{ matrix.python }}
+          path: |
+            benchmarks/results/*.json
+            .pytest_cache/v/cache/lastfailed
+          if-no-files-found: ignore
+
+  lifecycle:
+    # The R2 matrix is slow (a hundred integrated cycles plus signal
+    # handling), so it runs once, on the lowest supported interpreter.
+    name: lifecycle matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps -e .
+      - name: Lifecycle matrix
+        run: python -m pytest tests/lifecycle -q
+
+  schema:
+    # M2 also asks for schema-migration and backup/restore evidence.  Both
+    # are cheap and deterministic, so they run as their own named gate
+    # rather than being buried in the suite.
+    name: schema and backup/restore
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps -e .
+      - name: Migrations
+        run: python -m pytest tests/unit/test_schema_migration.py -q
+      - name: Backup and restore
+        run: python -m pytest tests/integration/test_backup_restore.py -q

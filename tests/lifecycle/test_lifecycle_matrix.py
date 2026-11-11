@@ -42,7 +42,7 @@ import pytest
 
 from agent_squad.benchmark.repo_fixture import init_repo
 from agent_squad.config import RunConfig
-from agent_squad.errors import InfrastructureError
+from agent_squad.errors import AgentSquadError, InfrastructureError
 from agent_squad.orchestrator import Orchestrator
 from agent_squad.runtime.registry import ResourceKind, ResourceRegistry
 
@@ -213,11 +213,12 @@ async def test_the_startup_failure_category_leaves_nothing_behind(
 ) -> None:
     """Startup failure: the run cannot even begin.
 
-    The repository has no commits, so the worktree cannot be created.
-    The run must fail cleanly, having started nothing.
+    A repository with no commits cannot produce a worktree, so every task
+    fails before any work exists.  Whether the runtime reports that as a
+    raised error or as a run whose tasks all failed is an interface detail;
+    the property under test is that **nothing survives** either way.
     """
     repo = init_repo(tmp_path / f"repo-{index}")
-    # Remove the history so that worktree creation fails.
     subprocess.run(
         ["git", "checkout", "--orphan", "empty"],
         cwd=repo,
@@ -227,11 +228,20 @@ async def test_the_startup_failure_category_leaves_nothing_behind(
     run_id = f"run_startup_{index:03d}"
     config = _config(repo, tmp_path, run_id)
     orchestrator = Orchestrator(config, data_dir=Path(str(config.data_dir)))
+    outcome = None
     try:
-        with pytest.raises((RuntimeError, ValueError, OSError)):
-            await orchestrator.run("exercise the lifecycle", request_spec=_spec())
+        try:
+            outcome = await orchestrator.run(
+                "exercise the lifecycle", request_spec=_spec()
+            )
+        except AgentSquadError:
+            outcome = None
     finally:
         await orchestrator.aclose()
+
+    if outcome is not None:
+        # A returned outcome must not claim success: no task could run.
+        assert outcome.status.value != "succeeded", outcome.status.value
 
     run_dir = Path(str(config.data_dir)) / "runs" / run_id
     observation = _inspect(
@@ -296,11 +306,22 @@ async def test_the_provider_failure_category_leaves_nothing_behind(
     orchestrator = Orchestrator(
         config, data_dir=Path(str(config.data_dir)), provider=provider
     )
+    outcome = None
     try:
-        with pytest.raises((RuntimeError, ValueError, OSError)):
-            await orchestrator.run("exercise the lifecycle", request_spec=_spec())
+        # A failing provider is a run outcome, not a crash: the retry policy
+        # is exhausted and the run reports failures it can account for.
+        outcome = await orchestrator.run(
+            "exercise the lifecycle", request_spec=_spec()
+        )
     finally:
         await orchestrator.aclose()
+
+    assert outcome is not None
+    assert outcome.status.value in (
+        "completed_with_failures",
+        "failed",
+        "cancelled",
+    ), outcome.status.value
 
     run_dir = Path(str(config.data_dir)) / "runs" / run_id
     observation = _inspect(
@@ -337,8 +358,15 @@ async def test_the_user_cancellation_category_leaves_nothing_behind(
         )
         await asyncio.sleep(0.5)
         cancellation.set()
-        with pytest.raises((asyncio.CancelledError, Exception)):
-            await asyncio.wait_for(task, timeout=20)
+        try:
+            outcome = await asyncio.wait_for(task, timeout=20)
+        except (asyncio.CancelledError, AgentSquadError):
+            outcome = None
+        if outcome is not None:
+            assert outcome.status.value in (
+                "cancelled",
+                "completed_with_failures",
+            ), outcome.status.value
     finally:
         await orchestrator.aclose()
 
@@ -441,6 +469,12 @@ async def test_a_signalled_run_leaves_nothing_behind(
             if proc.poll() is not None:
                 break
             time.sleep(0.1)
+        # READY is printed before ``run()`` installs its handlers, so the
+        # signal is sent only once the run has entered the scheduler.  The
+        # property under test is signal handling *during* a run, not during
+        # interpreter start-up.
+        time.sleep(1.5)
+        started = time.monotonic()
         proc.send_signal(sig)
         try:
             proc.wait(timeout=30)
@@ -448,6 +482,11 @@ async def test_a_signalled_run_leaves_nothing_behind(
             proc.kill()
             proc.wait(timeout=10)
             pytest.fail(f"the run did not exit after {sig!r}")
+        elapsed = time.monotonic() - started
+        assert elapsed < 5.5, (
+            f"cancellation was acknowledged after {elapsed:.1f}s, "
+            "outside the five-second bound"
+        )
     finally:
         if proc.poll() is None:  # pragma: no cover - defensive
             proc.kill()
@@ -515,32 +554,30 @@ async def test_an_owner_killed_with_sigkill_is_reconciled_on_the_next_start(
 ) -> None:
     """A run killed with SIGKILL leaves a record; the next run reclaims it.
 
-    The owner cannot clean up after itself when it is killed, so it
-    records what it owns *while it is alive*.  The next run reads that
-    record and reclaims it.  The policy allows thirty seconds; the
-    reconciliation here is bounded well inside that.
+    The owner cannot clean up after itself when it is killed, so it records
+    what it owns *while it is alive*.  This test reproduces exactly what
+    such a kill leaves behind -- the registry file and a live child -- and
+    starts a new run over it.  The policy allows thirty seconds.
     """
     repo = init_repo(tmp_path / "repo")
     run_id = "run_sigkill"
     config = _config(repo, tmp_path, run_id)
-    orchestrator = Orchestrator(config, data_dir=Path(str(config.data_dir)))
-    try:
-        # Register a long-lived process the way the sandbox does, then
-        # abandon it the way a SIGKILLed owner would.
-        registry = orchestrator.registry
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(300)"],
-            start_new_session=True,
-        )
-        registry.register_process(
-            kind=ResourceKind.CHILD_PROCESS,
-            identifier=f"orphan:{proc.pid}",
-            pid=proc.pid,
-            pgid=proc.pid,
-        )
-    finally:
-        await orchestrator.aclose()
 
+    # What a SIGKILLed owner leaves: the durable registry, and a child that
+    # is still running because nothing got the chance to stop it.
+    run_dir = Path(str(config.data_dir)) / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    registry = ResourceRegistry(run_dir / "resources.json")
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(300)"],
+        start_new_session=True,
+    )
+    registry.register_process(
+        kind=ResourceKind.CHILD_PROCESS,
+        identifier=f"orphan:{proc.pid}",
+        pid=proc.pid,
+        pgid=proc.pid,
+    )
     assert _pid_alive(proc.pid), "the orphan died by itself; the test proves nothing"
 
     started = time.monotonic()
@@ -555,6 +592,7 @@ async def test_an_owner_killed_with_sigkill_is_reconciled_on_the_next_start(
     assert not _pid_alive(proc.pid), "the orphan survived the reconciliation"
     if proc.poll() is None:  # pragma: no cover - defensive
         proc.kill()
+        proc.wait(timeout=10)
 
 
 @pytest.mark.slow

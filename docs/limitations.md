@@ -248,8 +248,9 @@ approve a protected action.
 - `AgentSquadError.retryable` is set on the exception classes but the
   scheduler's retry decision is driven primarily by the error *class*, not
   by that flag.
-- There is no static type checker in the CI configuration; the code is
-  annotated and `ruff` is configured, but mypy is not run.
+- Type checking is enforced by CI on the critical paths (verification,
+  state, provider, scheduler, runtime, models). It is not yet enforced on
+  every module, and the CI matrix has not run on GitHub-hosted runners.
 - Test coverage is broad but not exhaustive. The chaos/fault-injection
   harness described in the roadmap is only partially realised: the
   `failing_worker` scenario and the recovery tests cover the transient
@@ -272,3 +273,46 @@ The most valuable additions, in order:
    estimate is grounded in measured duplication rather than a constant.
 4. **A real repository corpus**, to check whether the findings hold when
    the tasks are large and the integration risk is non-trivial.
+
+
+---
+
+## 11. What the formal score does and does not mean
+
+`docs/scoring-criteria.md` is the binding policy. It requires a **named
+independent reviewer** who did not implement a criterion and who reproduces
+its critical result before that criterion can be marked `PASS`. It says
+explicitly that an author reviewing their own output does not qualify.
+
+No independent review has taken place. Accordingly
+`docs/assessment-record.yaml` reports:
+
+```text
+raw_score     = 0.0
+formal_score  = 0.0
+```
+
+Every criterion is `INCONCLUSIVE` (implemented, with in-repo evidence, but
+unreproduced by anyone but its author) or `MISSING` (the required artefacts
+do not exist).
+
+This is the policy working as designed, not a bug in the assessor. The
+record also publishes an `engineering_readiness` section — clearly labelled
+as *not* the formal score — which lists the criteria whose implementation is
+complete and which are awaiting nothing but an independent reproduction.
+
+Four criteria cannot be closed by any amount of implementation work:
+
+| Criterion | What it needs |
+|---|---|
+| `S3` | An audit by a reviewer independent of the implementation, with zero unresolved critical or high findings |
+| `U1` | 3 developers outside the implementation team, 30 consecutive days, 100 genuine runs across 3 repositories, 10 documented recovery exercises |
+| `U2` | 90 consecutive days, 10 external users, 1,000 genuine runs, 10 repositories |
+| `V4` | A second independent team reproducing V1–V3 on a separately administered machine |
+
+Three further criteria are *implementable* but not yet satisfied in this
+repository: `V1`–`V3` require a preregistered corpus of at least 60
+nontrivial tasks across 6 pinned real repositories, three model
+configurations, and three trials per cell. The repository has a synthetic
+fixture corpus and one 64-trial local sweep; that is not the same thing, and
+the sweep's timing sample carries a documented residual-server caveat.
