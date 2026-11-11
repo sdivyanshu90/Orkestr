@@ -236,7 +236,7 @@ class RuleBasedPlanner(BasePlanner):
                 ),
                 role=item.role,
                 priority=item.priority,
-                complexity=item.complexity,
+                complexity=_as_complexity(item.complexity),
                 estimated_duration_s=item.estimated_duration_s,
                 budget=Budget(
                     max_tokens=item.token_budget,
@@ -495,7 +495,7 @@ class LLMPlanner(BasePlanner):
                 ),
                 role=item.role,
                 priority=item.priority,
-                complexity=item.complexity,
+                complexity=_as_complexity(item.complexity),
                 estimated_duration_s=item.estimated_duration_s,
                 budget=Budget(
                     max_tokens=item.token_budget,
@@ -523,6 +523,16 @@ class LLMPlanner(BasePlanner):
                 depends_on=task.depends_on,
             )
         return tasks, briefs
+
+
+def _as_complexity(value: Any) -> Complexity:
+    """Coerce a complexity to the enum, defaulting when it is not one."""
+    if isinstance(value, Complexity):
+        return value
+    try:
+        return Complexity(str(value))
+    except ValueError:
+        return Complexity.MEDIUM
 
 
 def validate_plan(result: PlanResult, *, max_delegation_depth: int = 2) -> list[str]:

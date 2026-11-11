@@ -198,6 +198,13 @@ def recover_run(
         report.unresolved_side_effects = verify_side_effects(
             run_id, data_dir=data_dir
         )
+        # Every unresolved effect is annotated with how it may be repeated.
+        # Recovery must not blindly repeat an action whose effect it cannot
+        # undo, so the classification travels with the report.
+        from .runtime.effects import classify
+
+        for effect in report.unresolved_side_effects:
+            effect["effect_class"] = classify(effect.get("effect", "")).value
         log.append(
             EventType.RECOVERY_COMPLETED,
             run_id=run_id,
@@ -236,15 +243,16 @@ def verify_side_effects(run_id: str, *, data_dir: str | Path | None = None) -> l
             elif event.type is EventType.TASK_ATTEMPT_FINISHED and event.task_id:
                 finished.add((event.task_id, int(event.attempt or 0)))
         unresolved = []
-        for key, event in started.items():
+        for key, record in started.items():
             if key in finished:
                 continue
             unresolved.append(
                 {
                     "task_id": key[0],
                     "attempt": key[1],
-                    "started_at": event["created_at"],
+                    "started_at": record["created_at"],
                     "idempotency_key": f"{key[0]}#{key[1]}",
+                    "effect": "task.transition",
                     "reason": "attempt started but never recorded an outcome",
                 }
             )

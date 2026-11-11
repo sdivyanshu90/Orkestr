@@ -49,9 +49,10 @@ class RunDeadline:
 
     def remaining(self) -> float | None:
         """Seconds left, excluding the teardown reserve."""
-        if not self.enabled:
+        total = self.total_s
+        if not self.enabled or total is None:
             return None
-        return max(0.0, self.total_s - self.reserve_s - self.elapsed())
+        return max(0.0, total - self.reserve_s - self.elapsed())
 
     def state(self) -> DeadlineState:
         if not self.enabled:

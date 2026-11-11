@@ -73,7 +73,7 @@ class ReplayResult:
         }
 
 
-def replay_run(
+async def replay_run(
     run_id: str,
     *,
     data_dir: str | Path | None = None,
@@ -150,25 +150,27 @@ def replay_run(
 
         if execute:
             result.executed = True
-            result.execution_matches_record = _execute_replay(
+            result.execution_matches_record = await _execute_replay(
                 root=root,
                 run_id=run_id,
                 exchanges=exchanges,
                 recorded=result.state_transitions,
                 result=result,
+                log=log,
             )
         return result
     finally:
         db.close()
 
 
-def _execute_replay(
+async def _execute_replay(
     *,
     root: Path,
     run_id: str,
     exchanges: list[Exchange],
     recorded: list[dict[str, Any]],
     result: ReplayResult,
+    log: Any = None,
 ) -> bool | None:
     """Re-run the control plane against the recorded transcript.
 
@@ -196,35 +198,95 @@ def _execute_replay(
 
     recorded_status = [t.get("to") for t in recorded if t.get("task_id")]
     provider = RecordedProvider(exchanges)
-    orchestrator = Orchestrator(config, data_dir=root.parent.parent, provider=provider)
-    try:
+    # The replay must not write into the original run's state: the tasks
+    # there are already finished, and re-running them would be an illegal
+    # transition.  It gets its own scratch run.
+    import tempfile
 
-        outcome = orchestrator.run(
-            "replay", description="control-plane replay", integrate=False
+    scratch = tempfile.TemporaryDirectory(prefix="agent-squad-replay-")
+    try:
+        replay_config = config.model_copy(
+            update={
+                "run_id": f"{config.run_id}-replay",
+                "data_dir": scratch.name,
+            }
         )
-        replayed_status = [
-            o.status.value for o in outcome.outcomes.values()
-        ]
-        expected = [s for s in recorded_status if s != TaskStatus.PENDING.value]
-        result.warnings.append(
-            f"replayed {len(replayed_status)} task outcome(s) from {len(exchanges)} exchange(s)"
+        orchestrator = Orchestrator(
+            replay_config, data_dir=scratch.name, provider=provider
         )
-        return sorted(replayed_status) == sorted(expected)
-    except Exception as exc:
-        result.warnings.append(f"control-plane replay failed: {exc}")
-        return None
+        try:
+            # The replay must use the *recorded* plan.  Re-planning would ask
+            # the model for a different task set, and the recorded transcript
+            # would then be answering the wrong questions.
+            plan = _recorded_plan(log, run_id)
+            if plan is None:
+                result.warnings.append(
+                    "the recorded plan could not be reconstructed; the "
+                    "control-plane replay was not attempted"
+                )
+                return None
+            outcome = await orchestrator.run(
+                "replay",
+                description="control-plane replay",
+                integrate=False,
+                plan_override=plan,
+            )
+            replayed_status = [o.status.value for o in outcome.outcomes.values()]
+            # Compare the *final* status of each task, not every transition:
+            # the recorded sequence contains ready/running as well as succeeded.
+            final: dict[str, str] = {}
+            for transition in recorded:
+                task_id = transition.get("task_id")
+                if not task_id:
+                    continue
+                target = transition.get("to")
+                if target:
+                    final[task_id] = target
+            expected = sorted(
+                status for status in final.values() if status != TaskStatus.PENDING.value
+            )
+            result.warnings.append(
+                f"replayed {len(replayed_status)} task outcome(s) from "
+                f"{len(exchanges)} exchange(s)"
+            )
+            return sorted(replayed_status) == expected
+        except Exception as exc:
+            result.warnings.append(f"control-plane replay failed: {exc}")
+            return None
+        finally:
+            await orchestrator.aclose()
     finally:
-        await_close(orchestrator)
+        scratch.cleanup()
 
 
-def await_close(orchestrator: Any) -> None:
-    import asyncio
+def _recorded_plan(log: Any, run_id: str) -> Any:
+    """Reconstruct the plan the original run executed.
 
+    The plan is part of the durable record, so a replay exercises the
+    control plane against exactly the task set the original run used.
+    """
+    from ..models.task import TaskSpec
+    from ..planning.brief import TaskBrief
+    from ..planning.planner import PlanResult
+
+    events = log.read(run_id, types=[EventType.PLAN_CREATED])
+    if not events:
+        return None
+    payload = events[-1].payload
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(orchestrator.aclose())
-        return
-    # The reference is kept so the task is not garbage collected mid-flight.
-    closer = loop.create_task(orchestrator.aclose())
-    closer.add_done_callback(lambda _t: None)
+        tasks = [TaskSpec.model_validate(t) for t in payload.get("tasks", [])]
+        briefs = {
+            task_id: TaskBrief.model_validate(brief)
+            for task_id, brief in (payload.get("briefs") or {}).items()
+        }
+    except Exception:
+        return None
+    if not tasks:
+        return None
+    return PlanResult(
+        tasks=tasks,
+        briefs=briefs,
+        rationale=list(payload.get("rationale") or []),
+        warnings=list(payload.get("warnings") or []),
+        planner=str(payload.get("planner") or "recorded"),
+    )

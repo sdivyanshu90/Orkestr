@@ -579,9 +579,9 @@ class WorkerRunner:
                 payload={
                     "provider": kwargs.get("provider"),
                     "model": kwargs.get("model"),
-                    "input_tokens": kwargs.get("usage").input_tokens,
-                    "output_tokens": kwargs.get("usage").output_tokens,
-                    "estimated": kwargs.get("usage").estimated,
+                    "input_tokens": _usage_field(kwargs.get("usage"), "input_tokens"),
+                    "output_tokens": _usage_field(kwargs.get("usage"), "output_tokens"),
+                    "estimated": _usage_field(kwargs.get("usage"), "estimated"),
                     "latency_s": round(float(kwargs.get("latency_s") or 0.0), 6),
                     "iteration": kwargs.get("iteration"),
                 },
@@ -733,6 +733,17 @@ class WorkerRunner:
 
 
 # Imported lazily to avoid a circular import at module load time.
+def _usage_field(usage: Any, field: str) -> Any:
+    """A usage field, or ``None`` when the provider did not report it.
+
+    A missing measurement is null, never a zero: a zero would claim that
+    the provider said the request cost nothing.
+    """
+    if usage is None:
+        return None
+    return getattr(usage, field, None)
+
+
 def _normalise_status(status: str) -> str:
     mapping = {
         "M": "modified",

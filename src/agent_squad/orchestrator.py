@@ -264,6 +264,7 @@ class Orchestrator:
         request_spec: dict[str, Any] | None = None,
         integrate: bool = True,
         cancellation: asyncio.Event | None = None,
+        plan_override: PlanResult | None = None,
     ) -> RunOutcome:
         """Execute a complete orchestration session."""
         started_at = _dt.datetime.now(_dt.UTC)
@@ -282,6 +283,7 @@ class Orchestrator:
                 cancellation=cancellation,
                 started_at=started_at,
                 warnings=warnings,
+                plan_override=plan_override,
             )
 
     async def _execute(
@@ -294,6 +296,7 @@ class Orchestrator:
         cancellation: asyncio.Event | None,
         started_at: _dt.datetime,
         warnings: list[str],
+        plan_override: PlanResult | None = None,
     ) -> RunOutcome:
         self.logger.info("run started", objective=objective[:120])
 
@@ -345,21 +348,40 @@ class Orchestrator:
         )
 
         # ---- plan -------------------------------------------------------
-        planner = build_planner(self.config, self.provider)
-        with self.tracer.span("plan", run_id=self.config.run_id):
-            request = PlanRequest(
+        plan: PlanResult | None = plan_override
+        if plan is None:
+            planner = build_planner(self.config, self.provider)
+            with self.tracer.span("plan", run_id=self.config.run_id):
+                request = PlanRequest(
+                    run_id=self.config.run_id,
+                    objective=objective,
+                    description=description,
+                    repo_path=self.config.repo_path,
+                    base_revision=self.worktrees.head_revision()
+                    if self.worktrees.has_commits()
+                    else None,
+                    context=context,
+                    request_spec=request_spec,
+                    contract=contract,
+                )
+                plan = await planner.plan(request)
+        else:
+            # A replay supplies the recorded plan, so the control plane is
+            # exercised against exactly what the original run did.
+            self.log.append(
+                EventType.PLAN_CREATED,
                 run_id=self.config.run_id,
-                objective=objective,
-                description=description,
-                repo_path=self.config.repo_path,
-                base_revision=self.worktrees.head_revision()
-                if self.worktrees.has_commits()
-                else None,
-                context=context,
-                request_spec=request_spec,
-                contract=contract,
+                payload={
+                    "planner": plan.planner,
+                    "tasks": [t.model_dump(mode="json") for t in plan.tasks],
+                    "briefs": {
+                        k: v.model_dump(mode="json") for k, v in plan.briefs.items()
+                    },
+                    "rationale": plan.rationale,
+                    "warnings": plan.warnings,
+                    "replayed": True,
+                },
             )
-            plan = await planner.plan(request)
         warnings.extend(plan.warnings)
         self.logger.info(
             "plan created",
@@ -373,6 +395,9 @@ class Orchestrator:
             payload={
                 "planner": plan.planner,
                 "tasks": [t.model_dump(mode="json") for t in plan.tasks],
+                # The briefs are recorded too: without them a replay cannot
+                # reconstruct what each worker was asked to do.
+                "briefs": {k: v.model_dump(mode="json") for k, v in plan.briefs.items()},
                 "rationale": plan.rationale,
                 "warnings": plan.warnings,
             },

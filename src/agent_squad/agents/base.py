@@ -232,7 +232,7 @@ class AgentLoop:
                         # told what happened and, if it keeps repeating, the
                         # attempt is ended with the work already done.
                         repeats += 1
-                        result = ToolResult(
+                        tool_result = ToolResult(
                             ok=True,
                             content=(
                                 "This action was already performed successfully "
@@ -241,29 +241,29 @@ class AgentLoop:
                             data={"repeated": True, **previous.data},
                         )
                     else:
-                        result = await self._invoke_tool(call, tool_context, capabilities)
-                        if result.ok:
-                            successful_calls[key] = result
+                        tool_result = await self._invoke_tool(call, tool_context, capabilities)
+                        if tool_result.ok:
+                            successful_calls[key] = tool_result
                     tool_calls_made.append(call.name)
                     if self.on_tool_call is not None:
                         await _maybe_await(
                             self.on_tool_call(
                                 tool=call.name,
-                                ok=result.ok,
-                                error=result.error,
+                                ok=tool_result.ok,
+                                error=tool_result.error,
                             )
                         )
-                    if result.data.get("path") and call.name == "write_file":
+                    if tool_result.data.get("path") and call.name == "write_file":
                         changed.append(
                             ChangedFile(
-                                path=str(result.data["path"]),
+                                path=str(tool_result.data["path"]),
                                 status="modified",
                             )
                         )
                     messages.append(
                         ChatMessage(
                             role="tool",
-                            content=self._render_tool_result(call, result),
+                            content=self._render_tool_result(call, tool_result),
                             tool_call_id=call.id,
                             name=call.name,
                         )

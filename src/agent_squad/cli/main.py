@@ -440,7 +440,9 @@ def cmd_resume(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     from ..replay.replayer import replay_run
 
-    result = replay_run(args.run_id, data_dir=args.data_dir, checkpoint=args.checkpoint)
+    result = asyncio.run(
+        replay_run(args.run_id, data_dir=args.data_dir, checkpoint=args.checkpoint)
+    )
     payload = result.to_dict() if hasattr(result, "to_dict") else result
     if args.json:
         _print_json(payload)
