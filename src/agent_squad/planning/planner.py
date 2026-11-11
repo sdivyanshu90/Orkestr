@@ -29,6 +29,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..config import RunConfig
 from ..dag.graph import TaskGraph
+from ..errors import CancelledError as RunCancelledError
 from ..errors import ValidationError
 from ..models.contract import RequestContract
 from ..models.task import (
@@ -40,6 +41,13 @@ from ..models.task import (
     TaskSpec,
 )
 from ..providers.base import ChatMessage, ModelRequest
+from ..runtime.deadline import (
+    DeadlineExceeded,
+    Phase,
+    RunDeadline,
+    current_run_scope,
+    run_phase,
+)
 from .brief import Edit, TaskBrief
 from .inspector import RepoContext
 
@@ -142,6 +150,14 @@ class PlanRequest(BaseModel):
     A plan may *add* supplementary checks; it may not drop or weaken a
     required one.  The check is enforced after the plan is built.
     """
+    phase: str = ""
+    """The phase this plan belongs to.
+
+    Empty means "the planner decides": the first plan a run asks for is the
+    initial plan and any later one is a bounded revision of it.  The
+    distinction matters because the two are different phases of the run and
+    the deadline report has to say which one ran out of time.
+    """
 
 
 class PlanResult(BaseModel):
@@ -163,9 +179,88 @@ class PlanResult(BaseModel):
 
 
 class BasePlanner:
+    """The common shape of every planner.
+
+    Planning is a phase of the run, and it happens *before* the scheduler
+    exists, so it is the phase that most easily escapes the run's absolute
+    deadline.  The template method therefore announces the phase and
+    bounds the planner's work by the deadline, so that the deterministic
+    planner and the model-backed one are covered in exactly the same way.
+    """
+
     name = "base"
 
+    def __init__(
+        self,
+        *,
+        deadline: RunDeadline | None = None,
+        cancellation: Any = None,
+        phase: str = "",
+    ) -> None:
+        self._deadline = deadline
+        self._cancellation = cancellation
+        self._phase = phase
+
+    @property
+    def deadline(self) -> RunDeadline | None:
+        """The run's absolute deadline, explicit or ambient."""
+        return self._deadline or current_run_scope().deadline
+
     async def plan(self, request: PlanRequest) -> PlanResult:  # pragma: no cover
+        """Produce a plan, bounded by the run's deadline."""
+        phase = self._phase_for(request)
+        scope = current_run_scope()
+        scope.plan_calls += 1
+        deadline = self.deadline
+        if deadline is not None:
+            # The planner has no event log of its own, but the run's scope
+            # does: attaching it here means that a run which runs out of
+            # time while planning still leaves a durable record of it.
+            deadline.attach(scope.log, scope.run_id)
+
+        async def work() -> PlanResult:
+            return await self._plan(request)
+
+        try:
+            return await run_phase(
+                work,
+                phase=phase,
+                deadline=deadline,
+                cancellation=self._cancellation,
+            )
+        except (DeadlineExceeded, RunCancelledError) as exc:
+            if phase == Phase.REPLANNING.value:
+                # A revision that cannot be produced is *refused*, not
+                # replaced with an empty plan: the supervisor keeps the plan
+                # that already exists, and a revision that dropped every task
+                # would fail contract validation as a bug rather than as the
+                # deadline it actually was.
+                raise
+            # The initial plan could not be produced within the run's budget.
+            # An empty plan is returned so that the run stops and reports the
+            # reason instead of the failure escaping the run as an exception
+            # the caller never asked for.
+            return PlanResult(
+                tasks=[],
+                briefs={},
+                rationale=[],
+                warnings=[f"the plan could not be produced: {exc.message}"],
+                planner=self.name,
+            )
+
+    def _phase_for(self, request: PlanRequest) -> str:
+        """The phase this plan belongs to."""
+        if self._phase:
+            return self._phase
+        if request.phase:
+            return request.phase
+        scope = current_run_scope()
+        # A run may ask for more than one plan.  The first is the initial
+        # plan; a later one is the bounded revision the supervisor asks for
+        # after a classified failure.
+        return Phase.PLANNING.value if scope.plan_calls == 0 else Phase.REPLANNING.value
+
+    async def _plan(self, request: PlanRequest) -> PlanResult:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -180,7 +275,7 @@ class RuleBasedPlanner(BasePlanner):
 
     name = "rule_based"
 
-    async def plan(self, request: PlanRequest) -> PlanResult:
+    async def _plan(self, request: PlanRequest) -> PlanResult:
         spec = request.request_spec
         rationale: list[str] = []
         warnings: list[str] = []
@@ -292,12 +387,21 @@ class LLMPlanner(BasePlanner):
 
     name = "llm"
 
-    def __init__(self, provider: Any, *, max_tasks: int = 12) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        *,
+        max_tasks: int = 12,
+        deadline: RunDeadline | None = None,
+        cancellation: Any = None,
+        phase: str = "",
+    ) -> None:
+        super().__init__(deadline=deadline, cancellation=cancellation, phase=phase)
         self._provider = provider
         self._max_tasks = max_tasks
         self.warnings: list[str] = []
 
-    async def plan(self, request: PlanRequest) -> PlanResult:
+    async def _plan(self, request: PlanRequest) -> PlanResult:
         self.warnings = []
         messages = [
             ChatMessage(
@@ -583,8 +687,25 @@ def enforce_contract(
     return []
 
 
-def build_planner(run_config: RunConfig, provider: Any) -> BasePlanner:
-    """Choose a planner for the configured provider."""
+def build_planner(
+    run_config: RunConfig,
+    provider: Any,
+    *,
+    deadline: RunDeadline | None = None,
+    cancellation: Any = None,
+    phase: str = "",
+) -> BasePlanner:
+    """Choose a planner for the configured provider.
+
+    The deadline and the cancellation event are optional: a planner built
+    outside a run keeps working exactly as before, and a planner built
+    inside one is bounded by the run's absolute limit.
+    """
     if run_config.provider.name.lower() == "mock":
-        return RuleBasedPlanner()
-    return LLMPlanner(provider)
+        return RuleBasedPlanner(deadline=deadline, cancellation=cancellation, phase=phase)
+    return LLMPlanner(
+        provider,
+        deadline=deadline,
+        cancellation=cancellation,
+        phase=phase,
+    )

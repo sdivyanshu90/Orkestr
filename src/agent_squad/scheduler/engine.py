@@ -38,11 +38,19 @@ from typing import Any
 
 from ..config import RunConfig
 from ..dag.graph import TaskGraph
+from ..errors import CancelledError as RunCancelledError
 from ..errors import StaleAttemptError
 from ..models.message import MessageKind, make_message
 from ..models.run import RunStatus, RunSummary
 from ..models.task import TaskSpec, TaskStatus, utcnow
 from ..planning.brief import TaskBrief
+from ..runtime.deadline import (
+    DeadlineExceeded,
+    Phase,
+    current_run_scope,
+    record_deadline_summary,
+    run_phase,
+)
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 from ..verification.gate import VerificationGate, VerificationReport
@@ -206,6 +214,11 @@ class Scheduler:
         """Execute the whole graph and return a summary."""
         started = time.monotonic()
         self._started_at = utcnow()
+        if self.deadline is not None:
+            # The scheduler is the first component that owns an event log
+            # for sure; attaching it here means that the deadline records
+            # its own state even when the expiry happened earlier.
+            self.deadline.attach(self.log, self.config.run_id)
         completed: set[str] = set()
         failed: set[str] = set()
         blocked: set[str] = set()
@@ -233,6 +246,26 @@ class Scheduler:
                         pending.discard(task_id)
                     break
 
+                if self.deadline is not None and self.deadline.expired():
+                    # No work is created after the expiry.  The attempts that
+                    # are already running are bounded by their own phase and
+                    # are allowed to return; everything still queued is
+                    # cancelled without starting an attempt.
+                    for task_id in sorted(pending):
+                        self._cancel_task(task_id, cancelled)
+                        outcomes[task_id] = TaskOutcome(
+                            task_id=task_id,
+                            status=TaskStatus.CANCELLED,
+                            error=(
+                                "the run exceeded its absolute deadline before "
+                                "the task could start"
+                            ),
+                            error_class="timeout",
+                        )
+                        pending.discard(task_id)
+                    if not running:
+                        break
+
                 # Tasks whose ancestors failed can never run.
                 newly_blocked = self.graph.blocked_by_failure(failed) - blocked - completed
                 for task_id in sorted(newly_blocked):
@@ -257,6 +290,12 @@ class Scheduler:
                 ready.sort(key=lambda t: (-t.priority, t.id))
 
                 while ready and len(running) < self.max_workers:
+                    if self.deadline is not None and self.deadline.expired():
+                        # The dispatch loop itself must not outrun the
+                        # deadline: a task created here would only refuse to
+                        # start, but creating it at all is work the run has
+                        # promised not to start after expiry.
+                        break
                     task = ready.pop(0)
                     pending.discard(task.id)
                     handle = asyncio.create_task(self._execute(task), name=f"task:{task.id}")
@@ -301,6 +340,11 @@ class Scheduler:
         summary.status = final_status
         self.outcomes = outcomes
         self.state.set_run_status(self.config.run_id, final_status)
+        if self.deadline is not None:
+            # The run's deadline is part of the run's record: how much of it
+            # was used, how much was left and which phase observed the
+            # expiry.
+            record_deadline_summary(self.log, self.deadline, run_id=self.config.run_id)
         return summary
 
     # ------------------------------------------------------------ execute
@@ -374,19 +418,54 @@ class Scheduler:
             started = time.monotonic()
             result = None
             timed_out = False
+
+            async def attempt_work(attempt: int = attempt) -> Any:
+                """Run the attempt itself.
+
+                The attempt is a phase of the run: its timeout is clamped
+                to the remaining budget, so the attempt cannot outlive the
+                deadline, and the phase refuses to start once the deadline
+                has passed.
+                """
+                return await self.runner.execute(
+                    task,
+                    self.briefs.get(task.id) or self._fallback_brief(task),
+                    attempt=attempt,
+                    cancellation=self.cancellation,
+                    base_revision=self._base_for(task),
+                )
+
             try:
-                result = await asyncio.wait_for(
-                    self.runner.execute(
-                        task,
-                        self.briefs.get(task.id) or self._fallback_brief(task),
-                        attempt=attempt,
-                        cancellation=self.cancellation,
-                        base_revision=self._base_for(task),
-                    ),
-                    timeout=self._timeout_for(task),
+                result = await run_phase(
+                    attempt_work,
+                    phase=Phase.WORKER.value,
+                    deadline=self.deadline,
+                    cancellation=self.cancellation,
+                    timeout_s=self._timeout_for(task),
                 )
             except TimeoutError:
                 timed_out = True
+            except RunCancelledError:
+                self._cancel_task(task.id, set())
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.CANCELLED,
+                    attempts=attempts,
+                    error="the run was cancelled",
+                    error_class="cancelled",
+                )
+            except DeadlineExceeded as exc:
+                # The run ran out of budget during the attempt.  The attempt
+                # is abandoned rather than retried: another attempt would
+                # only make the overrun larger.
+                self._cancel_task(task.id, set())
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.CANCELLED,
+                    attempts=attempts,
+                    error=exc.message,
+                    error_class="timeout",
+                )
             except asyncio.CancelledError:
                 self._cancel_task(task.id, set())
                 raise
@@ -491,8 +570,23 @@ class Scheduler:
                     duration_s=time.monotonic() - started,
                 )
 
-            # The worker succeeded.  Now verify independently.
-            report = await self._verify(task, result)
+            # The worker succeeded.  Now verify independently.  A verification
+            # that runs out of the run's budget stops the attempt: it is a
+            # timeout, not a verification failure, and retrying it would only
+            # create work after the expiry.
+            try:
+                report = await self._verify(task, result)
+            except DeadlineExceeded as exc:
+                self._dispose_worktree(task, result, None)
+                self._cancel_task(task.id, set())
+                return TaskOutcome(
+                    task_id=task.id,
+                    status=TaskStatus.CANCELLED,
+                    attempts=attempts,
+                    error=exc.message,
+                    error_class="timeout",
+                    duration_s=time.monotonic() - started,
+                )
             if result.head_revision:
                 self._task_heads[task.id] = result.head_revision
             self._dispose_worktree(task, result, report)
@@ -588,6 +682,11 @@ class Scheduler:
         failed, or when the configuration asks for it, so that a failure can
         be inspected after the fact.
         """
+        # Reclaiming a worktree is teardown work: it is the phase where the
+        # run gives back what it owns.  The phase is announced through the
+        # synchronous seam, which is bounded by the run's remaining budget,
+        # so a stuck removal cannot keep the run alive.
+        current_run_scope().block_sync(Phase.TEARDOWN.value, deadline=self.deadline)
         path = getattr(result, "worktree_path", None)
         if not path:
             return
@@ -637,6 +736,11 @@ class Scheduler:
                 has_changes=bool(result.changed_files),
                 evidence=result.evidence,
             )
+        except DeadlineExceeded:
+            # The verification phase ran out of the run's budget.  It must not
+            # be reported as a failed *check*: the checks did not disagree,
+            # there was no time left to run them.
+            raise
         except Exception as exc:
             return VerificationReport(
                 task_id=task.id,
@@ -707,6 +811,11 @@ class Scheduler:
 
     def _final_status(self, summary: RunSummary) -> RunStatus:
         if summary.cancelled:
+            return RunStatus.CANCELLED
+        if self.deadline is not None and self.deadline.expired():
+            # The run stopped because its budget was gone.  It did not
+            # succeed, and saying so is what tells the operator that the
+            # deadline -- not the work -- ended it.
             return RunStatus.CANCELLED
         if summary.failed:
             return RunStatus.COMPLETED_WITH_FAILURES

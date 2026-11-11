@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 
 @dataclass
@@ -348,7 +349,7 @@ def beta_quantile(a: float, b: float, probability: float) -> float:
     by bisection.  Bisection is slower than Newton but it cannot diverge,
     which matters because this function is used to certify a threshold.
     """
-    if not 0.0 < a and not 0.0 < b:
+    if a <= 0.0 or b <= 0.0:
         raise ValueError("beta shape parameters must be positive")
     if probability <= 0.0:
         return 0.0

@@ -30,6 +30,7 @@ from .base import (
     ToolSpec,
     Usage,
 )
+from .ledger import RequestLedger, RequestPhase
 
 
 class OpenAICompatProvider(BaseProvider):
@@ -53,8 +54,10 @@ class OpenAICompatProvider(BaseProvider):
         extra_headers: dict[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
         salvage_tool_calls: bool = True,
+        ledger: RequestLedger | None = None,
+        phase: RequestPhase = RequestPhase.OTHER,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, ledger=ledger, phase=phase)
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
         self.timeout_s = timeout_s
@@ -72,7 +75,7 @@ class OpenAICompatProvider(BaseProvider):
     # ------------------------------------------------------- tool salvage
 
     @staticmethod
-    def _extract_json_objects(text: str) -> list[dict]:
+    def _extract_json_objects(text: str) -> list[dict[str, Any]]:
         """Pull candidate JSON objects out of a model's free text.
 
         Two shapes are considered: a fenced code block containing JSON, and
@@ -80,7 +83,7 @@ class OpenAICompatProvider(BaseProvider):
         considered -- in particular, prose that merely *mentions* JSON is not
         a candidate.
         """
-        candidates: list[dict] = []
+        candidates: list[dict[str, Any]] = []
         stripped = text.strip()
         if stripped.startswith("{") and stripped.endswith("}"):
             try:
@@ -227,7 +230,9 @@ class OpenAICompatProvider(BaseProvider):
             )
         except httpx.TimeoutException as exc:
             raise TransientModelError(
-                f"model request timed out after {self.timeout_s}s", provider=self.name
+                f"model request timed out after {self.timeout_s}s",
+                provider=self.name,
+                timeout=True,
             ) from exc
         except httpx.HTTPError as exc:
             # httpx exceptions often have an empty string representation, so
@@ -262,6 +267,25 @@ class OpenAICompatProvider(BaseProvider):
             ) from exc
         return self._decode(data, elapsed, request.tools)
 
+    @staticmethod
+    def _parse_usage(raw_usage: object) -> Usage | None:
+        """Normalise usage, or ``None`` when the endpoint reported none.
+
+        An endpoint that omits the usage object has not measured zero
+        tokens; it has not measured at all.  Returning ``None`` keeps the
+        distinction so the ledger can label the record unavailable.
+        """
+        if not isinstance(raw_usage, dict) or not raw_usage:
+            return None
+        return Usage(
+            input_tokens=int(raw_usage.get("prompt_tokens") or 0),
+            output_tokens=int(raw_usage.get("completion_tokens") or 0),
+            cached_input_tokens=int(
+                (raw_usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+            ),
+            estimated=False,
+        )
+
     def _decode(
         self,
         data: dict[str, Any],
@@ -271,7 +295,15 @@ class OpenAICompatProvider(BaseProvider):
         choices = data.get("choices") or []
         if not choices:
             raise ModelError("model response contained no choices", provider=self.name)
-        message = choices[0].get("message") or {}
+        # Usage is parsed before the message body on purpose: if a later part
+        # of the payload is malformed, the attempt still records the usage
+        # the endpoint actually reported rather than downgrading it.
+        usage = self._parse_usage(data.get("usage"))
+        self._observe_usage(usage)
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message")
+        if not isinstance(message, dict):
+            raise ModelError("model response message was not an object", provider=self.name)
         text = message.get("content") or ""
         calls: list[ToolCall] = []
         for raw in message.get("tool_calls") or []:
@@ -291,25 +323,17 @@ class OpenAICompatProvider(BaseProvider):
                 calls = recovered
                 salvaged = True
                 self.salvaged_calls += 1
-        raw_usage = data.get("usage") or {}
-        usage = Usage(
-            input_tokens=int(raw_usage.get("prompt_tokens") or 0),
-            output_tokens=int(raw_usage.get("completion_tokens") or 0),
-            cached_input_tokens=int(
-                (raw_usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
-            ),
-            estimated=False,
-        )
         raw = dict(data)
         raw["salvaged_tool_call"] = salvaged
+        raw["agent_squad_usage_reported"] = usage is not None
         return ModelResponse(
             text=text,
             tool_calls=calls,
-            usage=usage,
+            usage=usage if usage is not None else Usage(estimated=False),
             model=str(data.get("model") or self.model),
             provider=self.name,
             latency_s=elapsed,
-            finish_reason=str(choices[0].get("finish_reason") or "stop"),
+            finish_reason=str(first.get("finish_reason") or "stop"),
             raw=raw,
         )
 

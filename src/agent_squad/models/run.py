@@ -54,12 +54,12 @@ class VerificationLevel(str, Enum):
     def rank(self) -> int:
         return _VERIFICATION_ORDER.index(self)
 
-    def __lt__(self, other: object) -> bool:  # type: ignore[override]
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, VerificationLevel):
             return NotImplemented
         return self.rank < other.rank
 
-    def __le__(self, other: object) -> bool:  # type: ignore[override]
+    def __le__(self, other: object) -> bool:
         if not isinstance(other, VerificationLevel):
             return NotImplemented
         return self.rank <= other.rank

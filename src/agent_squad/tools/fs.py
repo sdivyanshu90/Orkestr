@@ -4,6 +4,12 @@ All paths are resolved relative to the task's worktree and are checked
 against the task scope.  Symlinks that point outside the worktree are
 rejected: without that check a repository could ship a symlink pointing at
 ``/etc`` and a write through it would escape the workspace.
+
+The protected verification material is refused in both directions.  It
+cannot be written, because the worker does not own it, and it cannot be
+read, because a worker that can read the oracle can write a check that
+satisfies it.  The refusal happens *at the call*, while the worker is
+running, which is the only moment at which it can stop the change.
 """
 
 from __future__ import annotations
@@ -19,6 +25,16 @@ from .base import ToolContext, ToolResult
 MAX_READ_BYTES = 512_000
 
 
+def _refuse_protected(context: ToolContext, raw: Any) -> str | None:
+    """The reason a path may not be touched, or ``None`` when it may."""
+    if not context.is_protected(str(raw)):
+        return None
+    return (
+        f"path {raw!r} is protected verification material: it is externally "
+        "owned and outside the worker's authority"
+    )
+
+
 class ReadFileTool:
     name = "read_file"
     rule = ToolRule(
@@ -32,6 +48,9 @@ class ReadFileTool:
         raw = arguments.get("path")
         if not raw:
             return ToolResult(ok=False, error="path is required", error_class="validation")
+        refusal = _refuse_protected(context, raw)
+        if refusal is not None:
+            return ToolResult(ok=False, error=refusal, error_class="policy")
         try:
             path = context.resolve(str(raw))
         except ToolError as exc:
@@ -84,6 +103,9 @@ class WriteFileTool:
             return ToolResult(
                 ok=False, error=f"unsupported mode {mode!r}", error_class="validation"
             )
+        refusal = _refuse_protected(context, raw)
+        if refusal is not None:
+            return ToolResult(ok=False, error=refusal, error_class="policy")
         try:
             path = context.resolve(str(raw))
         except ToolError as exc:
@@ -163,6 +185,9 @@ class DeletePathTool:
         raw = arguments.get("path")
         if not raw:
             return ToolResult(ok=False, error="path is required", error_class="validation")
+        refusal = _refuse_protected(context, raw)
+        if refusal is not None:
+            return ToolResult(ok=False, error=refusal, error_class="policy")
         try:
             path = context.resolve(str(raw))
         except ToolError as exc:

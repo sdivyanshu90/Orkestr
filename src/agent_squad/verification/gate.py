@@ -36,6 +36,7 @@ from ..config import RunConfig
 from ..errors import VerificationError
 from ..models.evidence import CheckRecord, CriterionState, EvidencePackage
 from ..models.task import AcceptanceCriterion, TaskSpec
+from ..runtime.deadline import Phase, RunDeadline, current_run_scope, run_phase
 from ..store.events import EventLog, EventType
 from ..store.state import StateStore
 from .checks import CheckOutcome, run_criterion
@@ -81,16 +82,26 @@ class VerificationGate:
         config: RunConfig,
         state: StateStore | None = None,
         log: EventLog | None = None,
+        *,
+        deadline: RunDeadline | None = None,
+        cancellation: Any = None,
     ) -> None:
         self._config = config
         self._state = state
         self._log = log
+        self._deadline = deadline
+        self._cancellation = cancellation
         self._failures: list[VerificationError] = []
 
     @property
     def failures(self) -> list[VerificationError]:
         """The verification failures observed so far."""
         return list(self._failures)
+
+    @property
+    def deadline(self) -> RunDeadline | None:
+        """The run's absolute deadline, explicit or ambient."""
+        return self._deadline or current_run_scope().deadline
 
     async def verify_task(
         self,
@@ -101,6 +112,36 @@ class VerificationGate:
         evidence: EvidencePackage | None = None,
     ) -> VerificationReport:
         """Verify one task against a workspace."""
+        deadline = self.deadline
+        if deadline is not None:
+            deadline.attach(self._log, task.run_id)
+
+        async def work() -> VerificationReport:
+            return await self._verify_task(
+                task,
+                workspace=workspace,
+                has_changes=has_changes,
+                evidence=evidence,
+            )
+
+        # The gate runs commands.  Those commands are bounded by the run's
+        # absolute deadline, so a check that cannot finish does not keep the
+        # run -- and the judgement it belongs to -- alive.
+        return await run_phase(
+            work,
+            phase=Phase.VERIFICATION.value,
+            deadline=deadline,
+            cancellation=self._cancellation,
+        )
+
+    async def _verify_task(
+        self,
+        task: TaskSpec,
+        *,
+        workspace: Path,
+        has_changes: bool,
+        evidence: EvidencePackage | None,
+    ) -> VerificationReport:
         import time
 
         started = time.monotonic()
@@ -168,14 +209,23 @@ class VerificationGate:
         unverified: list[str] = []
         advisory: list[str] = []
         failed: list[str] = []
+        deadline = self.deadline
 
         for criterion in criteria:
+            # A check that outlives the run's deadline would keep the run --
+            # and the judgement it belongs to -- alive past the limit the
+            # operator declared.
+            timeout_s = criterion.timeout_s or self._config.verification.command_timeout_s
+            if deadline is not None:
+                clamped = deadline.clamp(timeout_s)
+                if clamped is not None:
+                    timeout_s = clamped
             outcome: CheckOutcome = await run_criterion(
                 criterion,
                 workspace=workspace,
                 sandbox_config=self._config.sandbox,
                 has_changes=has_changes,
-                timeout_s=criterion.timeout_s or self._config.verification.command_timeout_s,
+                timeout_s=timeout_s,
             )
             checks.append(outcome.record)
             record = outcome.record

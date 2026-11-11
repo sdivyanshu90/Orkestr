@@ -297,7 +297,7 @@ class StateStore:
 
         with self._db.transaction() as conn:
             for task_id, state in states.items():
-                spec = specs.get(task_id)
+                task_spec = specs.get(task_id)
                 conn.execute(
                     "INSERT INTO tasks(task_id, run_id, status, attempt, owner, spec_json, "
                     "state_json, updated_at) VALUES (?,?,?,?,?,?,?,?) "
@@ -311,7 +311,7 @@ class StateStore:
                         state.status.value,
                         state.attempt,
                         state.owner,
-                        spec.model_dump_json() if spec else "{}",
+                        task_spec.model_dump_json() if task_spec else "{}",
                         state.model_dump_json(),
                         state.updated_at.isoformat(),
                     ),

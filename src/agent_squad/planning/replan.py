@@ -22,6 +22,11 @@ The rules:
 
 The supervisor's revision prompt states the failure, the failed criteria
 and what must not change.
+
+Replanning is a phase of the run in its own right: the revision is a model
+request like the initial plan, and it has to be bounded by the same
+absolute deadline, or a run could spend its whole budget deciding what to
+do and then have none left to do it.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from ..errors import ValidationError
 from ..models.contract import RequestContract
 from ..models.task import TaskSpec
 from ..planning.planner import PlanRequest, PlanResult, enforce_contract
+from ..runtime.deadline import Phase, RunDeadline
 
 
 @dataclass
@@ -107,6 +113,30 @@ def build_revision_request(
         base_revision=base_revision,
         request_spec={"objective": context.objective, "tasks": []},
         contract=contract,
+        phase=Phase.REPLANNING.value,
+    )
+
+
+def build_revision_planner(
+    run_config: Any,
+    provider: Any,
+    *,
+    deadline: RunDeadline | None = None,
+    cancellation: Any = None,
+) -> Any:
+    """The planner used for a bounded revision of the current plan.
+
+    A revision is the *replanning* phase, not the planning phase: the two
+    are bounded separately and the deadline report distinguishes them.
+    """
+    from ..planning.planner import build_planner
+
+    return build_planner(
+        run_config,
+        provider,
+        deadline=deadline,
+        cancellation=cancellation,
+        phase=Phase.REPLANNING.value,
     )
 
 
@@ -182,6 +212,11 @@ def check_revision(
 
     Returns the ids of the tasks that changed.  Raises when the revision is
     not admissible.
+
+    A revision is checked against the contract on two axes.  It may not
+    *drop* a required outcome, and it may not *redefine* one: keeping the
+    id while changing the check underneath it is a weakening that the
+    id-based comparison alone cannot see, and it is refused here.
     """
     changed = diff_plans(previous, revised)
     if not changed:
@@ -196,6 +231,9 @@ def check_revision(
 
     candidate = PlanResult(tasks=list(revised), briefs={})
     enforce_contract(candidate, contract)
+    contract.assert_criterion_semantics(
+        [criterion for task in revised for criterion in task.acceptance_criteria]
+    )
     # A verified task may not be dropped or weakened.
     for task_id in completed_task_ids:
         if task_id not in {t.id for t in revised}:

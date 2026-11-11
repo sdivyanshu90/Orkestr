@@ -13,6 +13,8 @@ orchestrator's view is the truth.
 
 from __future__ import annotations
 
+import fnmatch
+import posixpath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -36,9 +38,31 @@ class ToolContext:
     scope_patterns: tuple[str, ...] = ()
     scope_root: Path | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    protected_paths: tuple[str, ...] = ()
+    """Repository-relative paths that are externally owned material.
+
+    The protected material is outside the worker's authority in both
+    directions: it cannot be rewritten, and it cannot be read either,
+    because a worker that can read the oracle can write a check that
+    satisfies it.
+    """
+
+    protected_root: Path | None = None
+    """Where the staged copy of the protected material lives.
+
+    The staged copy is deliberately *outside* the worktree: the file tools
+    resolve every path inside the workdir, so material that lives outside
+    it is unreachable without an explicit grant.
+    """
 
     def resolve(self, relative: str) -> Path:
         """Resolve a task-relative path inside the workdir, refusing escapes."""
+        if self.is_protected(relative):
+            raise ToolError(
+                f"path {relative!r} is protected verification material: it is "
+                "externally owned and outside the worker's authority",
+                path=relative,
+            )
         candidate = (self.workdir / relative).resolve()
         root = (self.scope_root or self.workdir).resolve()
         if candidate != root and root not in candidate.parents:
@@ -46,6 +70,20 @@ class ToolContext:
                 f"path {relative!r} resolves outside the workspace", path=relative
             )
         return candidate
+
+    def is_protected(self, relative: str) -> bool:
+        """Whether a task-relative path is externally owned material."""
+        candidate = posixpath.normpath(str(relative))
+        for pattern in self.protected_paths:
+            if fnmatch.fnmatch(candidate, pattern) or candidate.startswith(
+                pattern.rstrip("/") + "/"
+            ):
+                return True
+        if self.protected_root is not None:
+            root = str(self.protected_root)
+            if candidate.startswith(root.rstrip("/") + "/") or candidate == root:
+                return True
+        return False
 
 
 @dataclass

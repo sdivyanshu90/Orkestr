@@ -23,10 +23,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..config import RunConfig
+from ..errors import CancelledError as RunCancelledError
 from ..errors import ConflictError
 from ..models.evidence import CheckRecord
+from ..runtime.deadline import (
+    DeadlineExceeded,
+    Phase,
+    RunDeadline,
+    current_run_scope,
+    run_phase,
+)
 from ..store.events import EventLog, EventType
 from ..workspace.worktree import Worktree, WorktreeManager, git
 from .patch import ConflictRecord, IntegrationResult, PatchArtifact
@@ -40,6 +49,10 @@ class IntegrationEngine:
     worktrees: WorktreeManager
     log: EventLog | None = None
     integration_root: Path | None = None
+    deadline: RunDeadline | None = None
+    """The run's absolute deadline, if the engine has one."""
+    cancellation: Any = None
+    """The run's cancellation event, if the engine has one."""
 
     def __post_init__(self) -> None:
         """Use a dedicated worktree root when one is configured.
@@ -135,6 +148,57 @@ class IntegrationEngine:
         keep_workspace: bool = False,
     ) -> IntegrationResult:
         """Apply the patches to a fresh integration worktree and verify them."""
+        deadline = self.deadline or current_run_scope().deadline
+        if deadline is not None:
+            deadline.attach(self.log, run_id)
+
+        async def work() -> IntegrationResult:
+            return await self._integrate(
+                patches,
+                base_revision=base_revision,
+                run_id=run_id,
+                task_id=task_id,
+                run_checks=run_checks,
+                dependencies=dependencies,
+                keep_workspace=keep_workspace,
+            )
+
+        # Integration applies patches and re-runs the combined test suite.
+        # Both are bounded by the run's absolute deadline: a candidate that
+        # cannot be checked in time is not a candidate the run may accept.
+        try:
+            return await run_phase(
+                work,
+                phase=Phase.INTEGRATION.value,
+                deadline=deadline,
+                cancellation=self.cancellation,
+            )
+        except DeadlineExceeded:
+            # The expiry is reported to the caller rather than converted into
+            # an ordinary integration failure: the orchestrator distinguishes
+            # "the candidate could not be judged" from "the candidate was
+            # judged and failed", and must not start a verdict on a tree that
+            # the deadline stopped from being assembled or checked.
+            raise
+        except RunCancelledError as exc:
+            # The phase could not finish.  The result says so: the run
+            # reports an unverified candidate rather than pretending that
+            # the patches were combined and checked.
+            result = IntegrationResult(passed=False)
+            result.error = f"the patches could not be integrated: {exc.message}"
+            return result
+
+    async def _integrate(
+        self,
+        patches: list[PatchArtifact],
+        *,
+        base_revision: str,
+        run_id: str = "",
+        task_id: str | None = None,
+        run_checks: bool = True,
+        dependencies: dict[str, tuple[str, ...]] | None = None,
+        keep_workspace: bool = False,
+    ) -> IntegrationResult:
         result = IntegrationResult(passed=False)
         result.base_revision = base_revision
         workspace: Worktree | None = None
@@ -312,11 +376,17 @@ class IntegrationEngine:
         command = list(self.config.verification.integration_test_command)
         sandbox = Sandbox(self.config.sandbox)
         started = __import__("datetime").datetime.now(__import__("datetime").UTC)
+        # The combined test suite is bounded by the run's absolute deadline:
+        # a suite that cannot finish in time must not keep the run alive.
+        timeout_s = self.config.verification.command_timeout_s
+        deadline = self.deadline or current_run_scope().deadline
+        if deadline is not None:
+            timeout_s = deadline.clamp(timeout_s)
         try:
             result = await sandbox.run(
                 command,
                 cwd=workspace,
-                timeout_s=self.config.verification.command_timeout_s,
+                timeout_s=timeout_s,
             )
         except Exception as exc:
             return CheckRecord(

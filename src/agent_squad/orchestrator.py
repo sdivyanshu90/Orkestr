@@ -55,6 +55,7 @@ from .planning.replan import (
 )
 from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
+from .providers.ledger import RequestLedger
 from .providers.registry import ProviderRouter, build_providers
 from .runtime.deadline import DeadlineExceeded, RunDeadline
 from .runtime.registry import ResourceRegistry, reconcile
@@ -121,6 +122,10 @@ class RunOutcome:
     warnings: list[str] = field(default_factory=list)
     contract: ContractVerdict | None = None
     """The acceptance judgement against the request contract, if one was made."""
+    requests: dict[str, Any] | None = None
+    """The request accounting record: every dispatched attempt, its phase,
+    its outcome and its usage.  Reconciles exactly with the attempts the
+    run made."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -131,6 +136,7 @@ class RunOutcome:
             "tasks": {k: v.to_dict() for k, v in self.outcomes.items()},
             "integration": self.integration.to_dict() if self.integration else None,
             "contract": self.contract.to_dict() if self.contract else None,
+            "requests": self.requests,
             "warnings": list(self.warnings),
         }
 
@@ -234,6 +240,11 @@ class Orchestrator:
         # is alive its process group is recorded here, so that a run
         # killed with SIGKILL leaves a record that the next run reclaims.
         self.registry = ResourceRegistry(self.paths.root / "resources.json")
+        # Every model attempt is recorded here, including planner, worker,
+        # reviewer, retry and fallback attempts, and including failures and
+        # cancellations.  The ledger is the run's accounting record: a run
+        # that cannot account for its own requests cannot report its cost.
+        self.request_ledger = RequestLedger()
         # A previous owner may have been killed and left processes behind.
         # Reclaiming them now, before this run starts any work, is what
         # makes the next run safe to start.
@@ -311,9 +322,12 @@ class Orchestrator:
         if self._router is None:
             configs = [self.config.provider, *self.config.fallback_providers]
             if self._injected_provider is not None:
-                providers = [self._injected_provider, *build_providers(self.config)[1:]]
+                providers = [
+                self._injected_provider,
+                *build_providers(self.config, ledger=self.request_ledger)[1:],
+            ]
             else:
-                providers = build_providers(self.config)
+                providers = build_providers(self.config, ledger=self.request_ledger)
             if self._record_exchanges:
                 from .replay.recorder import RecordingProvider
 
@@ -345,7 +359,7 @@ class Orchestrator:
             config = self.config.provider.model_copy(
                 update={"model": model_override}
             )
-            cached = build_provider(config)
+            cached = build_provider(config, ledger=self.request_ledger)
             self._role_providers[role] = cached
         return cached
 
@@ -796,6 +810,7 @@ class Orchestrator:
             started_at=started_at,
             finished_at=finished_at,
             warnings=warnings,
+            requests=self.request_ledger.summary(),
         )
 
     # ----------------------------------------------------------- integration

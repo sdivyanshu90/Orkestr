@@ -122,23 +122,23 @@ class BudgetManager:
         with self._lock:
             bucket = self.scope(key)
             if bucket.token_limit is not None:
-                projected = bucket.tokens_used + extra_tokens
-                if projected > bucket.token_limit:
+                projected_tokens = bucket.tokens_used + extra_tokens
+                if projected_tokens > bucket.token_limit:
                     raise BudgetExceeded(
                         f"token budget exhausted for {key!r}: "
-                        f"{projected} > {bucket.token_limit}",
+                        f"{projected_tokens} > {bucket.token_limit}",
                         scope=key,
-                        projected_tokens=projected,
+                        projected_tokens=projected_tokens,
                         limit=bucket.token_limit,
                     )
             if bucket.cost_limit_usd is not None:
-                projected = bucket.cost_used_usd + extra_cost_usd
-                if projected > bucket.cost_limit_usd:
+                projected_cost = bucket.cost_used_usd + extra_cost_usd
+                if projected_cost > bucket.cost_limit_usd:
                     raise BudgetExceeded(
                         f"cost budget exhausted for {key!r}: "
-                        f"{projected:.6f} > {bucket.cost_limit_usd:.6f}",
+                        f"{projected_cost:.6f} > {bucket.cost_limit_usd:.6f}",
                         scope=key,
-                        projected_cost=projected,
+                        projected_cost=projected_cost,
                         limit=bucket.cost_limit_usd,
                     )
 

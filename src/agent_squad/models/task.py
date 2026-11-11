@@ -26,6 +26,8 @@ Legal transitions::
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import json
 from enum import Enum
 from typing import Any
 
@@ -162,6 +164,31 @@ class AcceptanceCriterion(BaseModel):
     required: bool = True
     blocking: bool = True
     timeout_s: float | None = Field(default=None, gt=0)
+
+    @property
+    def semantic_key(self) -> str:
+        """A content hash of what this criterion *means*.
+
+        The identity of a criterion is its ``id``; its meaning is the kind
+        of check, the parameters it checks, the description and whether it
+        is required.  Binding the two together is what makes "reuse an id
+        with different semantics" detectable at all: without it, a plan
+        can keep the id and quietly swap the check underneath it, and the
+        id-based comparison would still say "the requirement is present".
+
+        The id is deliberately *excluded* from the hash: the hash answers
+        "does this criterion still mean what it meant?", not "is this the
+        same criterion?".
+        """
+        payload = {
+            "kind": self.kind.value,
+            "spec": self.spec,
+            "description": self.description,
+            "required": self.required,
+            "blocking": self.blocking,
+        }
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     @field_validator("id")
     @classmethod

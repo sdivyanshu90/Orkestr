@@ -21,6 +21,10 @@ dev = [
     "pytest-asyncio>=0.23",
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-http>=1.24",
+    # The release gate installs tooling from the same hash-locked file as
+    # the runtime, so the linters are part of the reproducible environment.
+    "mypy>=1.11",
+    "ruff>=0.6",
 ]
 otel = [
     "opentelemetry-sdk>=1.24",
@@ -40,13 +44,68 @@ agent_squad = ["py.typed"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-q --strict-markers"
+# ``importlib`` avoids module-name collisions between same-named test files
+# in different directories (for example unit/ and integration/); the default
+# prepend mode cannot collect both.
+addopts = "-q --strict-markers --import-mode=importlib"
 markers = [
     "slow: long running tests",
     "chaos: fault injection tests",
     "integration: multi-component integration tests",
 ]
 filterwarnings = ["error::DeprecationWarning:agent_squad.*"]
+
+[tool.mypy]
+# The M2 criterion requires zero type errors on the verification, state,
+# provider and orchestration paths.  This project maps those to the six
+# trees below: verification, store (state), providers, scheduler, runtime
+# and models.  They are listed in ``files`` so that a bare ``mypy``
+# invocation checks exactly that code and nothing else, making every failure
+# attributable.  Modules outside this set are reported separately when they
+# block the criterion; they are not silently excluded from review.
+#
+# ``python_version`` is pinned to the *lowest* supported interpreter
+# (``requires-python``) so that the check catches use of newer syntax or
+# standard-library APIs than the project promises to support.
+python_version = "3.11"
+files = [
+    "src/agent_squad/verification",
+    "src/agent_squad/store",
+    "src/agent_squad/providers",
+    "src/agent_squad/scheduler",
+    "src/agent_squad/runtime",
+    "src/agent_squad/models",
+]
+# The package lives under ``src/``; without this the modules would resolve
+# as top-level names and every intra-package import would fail.
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+show_error_codes = true
+pretty = true
+# Unreachable code is a defect signal, not a style preference: a branch
+# that cannot run is either dead code or a mistake in the condition.
+warn_unreachable = true
+# The editable install puts ``src/`` on ``sys.path``, which makes mypy
+# treat the whole package as a third-party distribution and *silence*
+# errors in modules reached through an import.  Every file the criterion
+# covers is passed as a root source, so its errors are always reported.
+follow_imports = "normal"
+
+# ---------------------------------------------------------------- strictness
+# The critical paths are checked strictly.  The rest of the tree is checked
+# with the default (non-strict) settings, because the criterion scopes the
+# zero-error requirement to these paths.
+[[tool.mypy.overrides]]
+module = [
+    "agent_squad.verification.*",
+    "agent_squad.store.*",
+    "agent_squad.providers.*",
+    "agent_squad.scheduler.*",
+    "agent_squad.runtime.*",
+    "agent_squad.models.*",
+]
+strict = true
 
 [tool.ruff]
 line-length = 100

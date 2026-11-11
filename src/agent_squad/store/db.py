@@ -30,15 +30,37 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..errors import InfrastructureError
 
-SCHEMA_VERSION = 1
+#: The newest schema this build understands.  ``PRAGMA user_version`` holds
+#: the version that is physically present in the file; the two must match
+#: after :meth:`Database.migrate` has run.
+SCHEMA_VERSION = 2
 
-_MIGRATIONS: list[str] = [
+
+@dataclass(frozen=True)
+class Migration:
+    """One ordered, forward-only schema step.
+
+    Migrations are identified by the *target* version so that a file at
+    version ``N`` is upgraded by applying every step with ``version > N`` in
+    ascending order.  Each step must be idempotent: SQLite's
+    ``executescript`` commits before it runs, so a crash can leave a file
+    with the schema applied but ``user_version`` not yet bumped.  Re-running
+    the step is then the recovery path, and a non-idempotent step would
+    corrupt an otherwise healthy file.
     """
+
+    version: int
+    description: str
+    sql: str
+
+
+_BASELINE_SCHEMA = """
     CREATE TABLE IF NOT EXISTS runs (
         run_id       TEXT PRIMARY KEY,
         status       TEXT NOT NULL,
@@ -151,8 +173,19 @@ _MIGRATIONS: list[str] = [
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
-    """,
-]
+    """
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(1, "baseline event log and projections", _BASELINE_SCHEMA),
+    Migration(
+        2,
+        "index event types for recovery and replay scans",
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_run_type
+            ON events(run_id, type, seq);
+        """,
+    ),
+)
 
 
 class Database:
@@ -181,21 +214,89 @@ class Database:
         cur.execute("PRAGMA busy_timeout=30000")
         cur.close()
 
-    def migrate(self) -> None:
-        """Apply the schema.
+    @property
+    def schema_version(self) -> int:
+        """The schema version physically stored in this database file."""
+        with self._lock:
+            return self._read_user_version()
 
-        ``executescript`` is used because SQLite's ``execute`` accepts only a
-        single statement.  The script is idempotent (``IF NOT EXISTS``
-        throughout), so re-running it on an existing database is a no-op.
+    def migrate(self) -> None:
+        """Upgrade the file to :data:`SCHEMA_VERSION`, in order.
+
+        ``PRAGMA user_version`` is the source of truth.  A database created
+        by a pre-migration build has ``user_version == 0`` but already
+        contains the baseline tables (and may carry
+        ``meta.schema_version``), so it is *adopted* at that version rather
+        than re-created: re-running the baseline is harmless, but silently
+        resetting a newer file's version would hide a downgrade.
+
+        Running this twice is a no-op: applied steps are skipped, and a
+        later reopen does not re-execute their SQL.  A file written by a
+        newer build is refused instead of being used with an older schema.
         """
         with self._lock:
-            for statement in _MIGRATIONS:
-                self._conn.executescript(statement)
+            current = self._read_user_version()
+            if current == 0:
+                current = self._legacy_version()
+                if current:
+                    self._write_version(current)
+            if current > SCHEMA_VERSION:
+                raise InfrastructureError(
+                    f"database schema version {current} is newer than this build "
+                    f"({SCHEMA_VERSION}); upgrade agent-squad before opening it",
+                    path=str(self.path),
+                    schema_version=current,
+                )
+            for migration in MIGRATIONS:
+                if migration.version <= current:
+                    continue
+                self._conn.executescript(migration.sql)
+                self._write_version(migration.version)
+                current = migration.version
+
+    def _read_user_version(self) -> int:
+        row = self._conn.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _write_version(self, version: int) -> None:
+        # PRAGMA does not accept bound parameters; ``version`` is an int read
+        # from a migration tuple, never user input.
+        self._conn.execute(f"PRAGMA user_version = {version:d}")
+        if self._table_exists("meta"):
             self._conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (str(SCHEMA_VERSION),),
+                (str(version),),
             )
+
+    def _legacy_version(self) -> int:
+        """Best-effort version of a file written before ``user_version``.
+
+        Only the baseline tables existed then.  A file with those tables but
+        no recorded version is therefore at least version 1; the ``meta``
+        marker may narrow it down further.  A file that does not even have
+        the baseline is genuinely empty and starts at 0.
+        """
+        if not (self._table_exists("runs") and self._table_exists("events")):
+            return 0
+        if self._table_exists("meta"):
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is not None:
+                try:
+                    recorded = int(str(row[0]))
+                except (TypeError, ValueError):
+                    recorded = 0
+                if recorded > 0:
+                    return recorded
+        return 1
+
+    def _table_exists(self, name: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        return row is not None
 
     # ------------------------------------------------------------ primitives
 

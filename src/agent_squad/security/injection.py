@@ -165,10 +165,24 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}\b"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bAIza[0-9A-Za-z\-_]{30,}\b"),
     re.compile(r"-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"),
-    re.compile(r"(?i)\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['\"]?[^\s'\"]{8,}"),
+    re.compile(
+        r"(?i)\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['\"]?[^\s'\"]{8,}"
+    ),
+    # Environment-variable style secrets.  The *name* is the hint, and the
+    # name is the part that survives: ``AWS_SECRET_ACCESS_KEY=...`` and
+    # ``GITHUB_TOKEN=...`` are the shapes that actually turn up in a
+    # repository's environment file.
+    re.compile(
+        r"(?i)\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY"
+        r"|CREDENTIAL)[A-Z0-9_]*\s*=\s*[^\s\"'&]{6,}"
+    ),
+    # Header style credentials, which is how a secret travels in a request.
+    re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._\-+/=]{12,}"),
 )
 
 
@@ -181,3 +195,14 @@ def redact_secrets(text: str) -> tuple[str, list[str]]:
             found.append(match.group(0)[:8] + "...")
             out = out.replace(match.group(0), "[REDACTED]")
     return out, found
+
+
+def contains_secret(text: str) -> bool:
+    """Whether ``text`` looks like it carries a credential.
+
+    A redaction that only fires on the exact patterns above can be
+    defeated by a format it does not know; this is the coarse check a
+    test uses to assert that no secret travelled.
+    """
+    _text, found = redact_secrets(text)
+    return bool(found)

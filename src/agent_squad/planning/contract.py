@@ -9,10 +9,16 @@ required outcomes**.  That is not a gap in the implementation; it is the
 honest position: without a stated requirement there is nothing independent
 against which the result can be judged, so the run is reported as
 *inconclusive* rather than *accepted*.
+
+The build also refuses a request that reuses an outcome id with a
+different meaning.  Two tasks that both claim the id ``tests-pass`` but
+mean different things by it describe two different requirements, and
+collapsing them into one silently drops one of them.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from ..errors import ValidationError
@@ -43,7 +49,7 @@ def build_contract(
         )
 
     outcomes: list[AcceptanceCriterion] = []
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     scope = RepoScope()
     for task in request_spec["tasks"]:
         for raw in task.get("acceptance_criteria") or []:
@@ -54,10 +60,20 @@ def build_contract(
                     f"the request's acceptance criterion for task "
                     f"{task.get('id')!r} is not expressible: {exc}"
                 ) from exc
-            if criterion.id in seen:
+            previous = seen.get(criterion.id)
+            if previous is not None:
+                if previous != criterion.semantic_key:
+                    raise ValidationError(
+                        f"the request reuses the acceptance criterion id "
+                        f"{criterion.id!r} with a different meaning, so the "
+                        "two requirements cannot both be honoured; the request "
+                        "must use distinct ids",
+                        criterion_id=criterion.id,
+                        task_id=task.get("id"),
+                    )
                 # The same criterion in two tasks is one requirement.
                 continue
-            seen.add(criterion.id)
+            seen[criterion.id] = criterion.semantic_key
             outcomes.append(criterion)
         include = tuple(task.get("include_paths") or ())
         exclude = tuple(task.get("exclude_paths") or ())
@@ -73,3 +89,17 @@ def build_contract(
         scope=scope,
         notes=description,
     )
+
+
+def enforce_plan_contract(
+    contract: RequestContract, criteria: Iterable[AcceptanceCriterion]
+) -> None:
+    """Refuse a plan that drops *or* redefines a required outcome.
+
+    This is the single entry point a planner should use.  It refuses a plan
+    that omits a required outcome and a plan that keeps an outcome's id
+    while changing the check underneath it -- the second case is the one an
+    id-based comparison cannot see, and it is how a plan weakens a
+    contract without ever dropping an id.
+    """
+    contract.assert_plan_preserves(tuple(criteria))

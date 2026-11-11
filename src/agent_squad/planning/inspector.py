@@ -11,16 +11,32 @@ Safety notes:
 * The inspector never executes anything from the repository.
 * Paths discovered in the repository are treated as untrusted data.
 * Binary and oversized files are skipped rather than truncated silently.
+
+The inspection is a *phase* of the run, and it happens before the scheduler
+exists, so it is the phase that most easily escapes a run's absolute
+deadline.  The scan therefore runs in a daemon thread which is joined with
+the run's remaining budget: a repository on a filesystem that has stopped
+responding cannot keep the run past its deadline, and a cancellation is
+observed while the scan is still running.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..errors import CancelledError as RunCancelledError
+from ..runtime.deadline import (
+    DeadlineExceeded,
+    Phase,
+    RunDeadline,
+    RunScope,
+    current_run_scope,
+)
 from ..security.injection import InjectionCategory, scan_for_injection
 
 DEFAULT_IGNORE_DIRS = frozenset(
@@ -132,16 +148,102 @@ class RepoContext:
 class RepositoryInspector:
     """Read-only repository survey."""
 
-    def __init__(self, root: str | Path, *, max_files: int = 4000) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        max_files: int = 4000,
+        deadline: RunDeadline | None = None,
+    ) -> None:
         self.root = Path(root).resolve()
         self.max_files = max_files
+        self._deadline = deadline
+
+    @property
+    def deadline(self) -> RunDeadline | None:
+        """The run's absolute deadline, explicit or ambient."""
+        return self._deadline or current_run_scope().deadline
 
     def inspect(self, *, max_depth: int = 4) -> RepoContext:
+        """Survey the repository.
+
+        The scan is the blocking part of the phase, so it is executed in a
+        daemon thread that is joined with the run's remaining budget.  A
+        scan that cannot finish therefore delays the phase by at most the
+        remaining budget: a repository on a filesystem that has stopped
+        responding cannot keep the run past its deadline.
+        """
+        deadline = self.deadline
+        scope = current_run_scope()
+        # Fail fast: a survey that starts after the expiry would only
+        # produce a context nobody has time to act on.
+        if deadline is not None and deadline.expired():
+            deadline.observe(Phase.INSPECTION.value)
+            return RepoContext(root=str(self.root))
+        try:
+            return self._scan_bounded(max_depth, deadline=deadline, scope=scope)
+        except (DeadlineExceeded, RunCancelledError):
+            # The phase could not finish.  The run cannot proceed anyway --
+            # the budget is gone -- so the phase reports an empty context
+            # and lets the run stop, rather than letting the failure escape
+            # the run as an exception the caller never asked for.
+            return RepoContext(root=str(self.root))
+
+    def _scan_bounded(
+        self, max_depth: int, *, deadline: RunDeadline | None, scope: RunScope
+    ) -> RepoContext:
+        """Run the scan off the event loop and wait for it within budget."""
+        holder: dict[str, RepoContext] = {}
+        failure: list[BaseException] = []
+
+        def work() -> None:
+            try:
+                holder["context"] = self._scan(max_depth, deadline=deadline, scope=scope)
+            except BaseException as exc:
+                # The failure is reported to the caller rather than
+                # swallowed: a survey that could not be completed must not
+                # look like an empty repository.
+                failure.append(exc)
+
+        thread = threading.Thread(target=work, name="squad-inspect", daemon=True)
+        thread.start()
+        cancellation = scope.cancellation
+        while thread.is_alive():
+            budget = deadline.remaining() if deadline is not None else None
+            if budget is not None and budget <= 0:
+                break
+            thread.join(timeout=0.05)
+            if cancellation is not None and cancellation.is_set():
+                raise RunCancelledError(
+                    "the inspection phase was cancelled", phase=Phase.INSPECTION.value
+                )
+        if thread.is_alive():
+            deadline.observe(Phase.INSPECTION.value)
+            raise DeadlineExceeded(
+                "the repository inspection did not finish within the run's "
+                f"deadline: {deadline.summary()}",
+                phase=Phase.INSPECTION.value,
+            )
+        if failure:
+            raise failure[0]
+        return holder["context"]
+
+    def _scan(
+        self, max_depth: int, *, deadline: RunDeadline | None, scope: RunScope
+    ) -> RepoContext:
         context = RepoContext(root=str(self.root))
+        # The seam is inside the scan thread on purpose: a test that blocks
+        # the inspection must not be able to freeze the event loop as well.
+        scope.enter_sync(Phase.INSPECTION.value)
         context.head_revision = self._head_revision()
         count = 0
         for path in sorted(self.root.rglob("*")):
             if count >= self.max_files:
+                break
+            if deadline is not None and count % 64 == 0 and deadline.expired():
+                # The scan stops rather than starting more work it cannot
+                # finish; what it has already seen is still reported.
+                deadline.observe(Phase.INSPECTION.value)
                 break
             if not self._include(path):
                 continue
@@ -174,7 +276,7 @@ class RepositoryInspector:
                 "build.gradle",
             ):
                 context.manifest_files.append(rel)
-            findings = self._scan(path)
+            findings = self._scan_file(path)
             for finding in findings:
                 context.injection_findings.append(
                     {"path": rel, **finding.to_dict(), "source": "repository_file"}
@@ -197,7 +299,7 @@ class RepositoryInspector:
         return proc.stdout.strip()
 
     @staticmethod
-    def _scan(path: Path) -> list[Any]:
+    def _scan_file(path: Path) -> list[Any]:
         try:
             if path.stat().st_size > 200_000:
                 return []

@@ -525,3 +525,101 @@ async def test_a_run_that_tampers_with_protected_material_is_rejected(
         ), "the protected file was modified and the run was not rejected"
     # The repository's own file was never changed by the run.
     assert protected.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
+# pytest selectors: the exit code is not the verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_a_skipped_required_test_does_not_satisfy_the_contract(
+    trees,
+) -> None:
+    """A skipped test exits zero; it must not be accepted as evidence.
+
+    pytest reports success for a run in which the only selected test was
+    skipped.  The behaviour the test checks was never exercised, so
+    accepting it is a false success.  The check must fail, and the
+    contract must not be accepted.
+    """
+    base, candidate = trees
+    (candidate / "tests").mkdir()
+    (candidate / "tests" / "test_skipped.py").write_text(
+        "import pytest\n\n"
+        "@pytest.mark.skip(reason='not today')\n"
+        "def test_required():\n"
+        "    assert False\n",
+        encoding="utf-8",
+    )
+    contract = RequestContract(
+        objective="the required test must pass",
+        required_outcomes=(
+            criterion(
+                "required-test",
+                "pytest_selector",
+                {"selector": "tests/test_skipped.py", "command": ["python3", "-m", "pytest", "-q"]},
+            ),
+        ),
+    )
+    gate = ContractGate(RunConfig(run_id="r", repo_path=str(base)))
+    verdict = await gate.verify(contract, base_tree=base, candidate_tree=candidate)
+
+    assert verdict.outcome is not VerificationOutcome.ACCEPTED
+    assert verdict.not_satisfied == ("required-test",)
+
+
+@pytest.mark.integration
+async def test_a_selector_that_collects_no_tests_does_not_satisfy_the_contract(
+    trees,
+) -> None:
+    """Zero collected tests is "nothing ran", not "the outcome holds"."""
+    base, candidate = trees
+    (candidate / "tests").mkdir()
+    (candidate / "tests" / "test_empty.py").write_text(
+        "# a file with no tests at all\n", encoding="utf-8"
+    )
+    contract = RequestContract(
+        objective="the required test must pass",
+        required_outcomes=(
+            criterion(
+                "required-test",
+                "pytest_selector",
+                {"selector": "tests/test_empty.py", "command": ["python3", "-m", "pytest", "-q"]},
+            ),
+        ),
+    )
+    gate = ContractGate(RunConfig(run_id="r", repo_path=str(base)))
+    verdict = await gate.verify(contract, base_tree=base, candidate_tree=candidate)
+
+    assert verdict.outcome is not VerificationOutcome.ACCEPTED
+    assert verdict.not_satisfied == ("required-test",)
+
+
+@pytest.mark.integration
+async def test_a_genuinely_passing_selector_is_still_accepted(trees) -> None:
+    """The stricter judgement must not reject a real pass.
+
+    This is the control: without it, an always-reject selector check would
+    satisfy the two tests above and prove nothing.
+    """
+    base, candidate = trees
+    (candidate / "tests").mkdir()
+    (candidate / "tests" / "test_real.py").write_text(
+        "def test_real():\n    assert 1 + 1 == 2\n", encoding="utf-8"
+    )
+    contract = RequestContract(
+        objective="the required test must pass",
+        required_outcomes=(
+            criterion(
+                "required-test",
+                "pytest_selector",
+                {"selector": "tests/test_real.py", "command": ["python3", "-m", "pytest", "-q"]},
+            ),
+        ),
+    )
+    gate = ContractGate(RunConfig(run_id="r", repo_path=str(base)))
+    verdict = await gate.verify(contract, base_tree=base, candidate_tree=candidate)
+
+    assert verdict.outcome is VerificationOutcome.ACCEPTED, verdict.to_dict()
+    assert verdict.established == ("required-test",)

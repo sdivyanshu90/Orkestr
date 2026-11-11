@@ -24,6 +24,7 @@ from .base import (
     ToolCall,
     Usage,
 )
+from .ledger import RequestLedger, RequestPhase
 
 
 class AnthropicProvider(BaseProvider):
@@ -46,8 +47,10 @@ class AnthropicProvider(BaseProvider):
         max_concurrency: int = 4,
         api_version: str = "2023-06-01",
         client: httpx.AsyncClient | None = None,
+        ledger: RequestLedger | None = None,
+        phase: RequestPhase = RequestPhase.OTHER,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, ledger=ledger, phase=phase)
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
         self.timeout_s = timeout_s
@@ -136,7 +139,9 @@ class AnthropicProvider(BaseProvider):
             )
         except httpx.TimeoutException as exc:
             raise TransientModelError(
-                f"model request timed out after {self.timeout_s}s", provider=self.name
+                f"model request timed out after {self.timeout_s}s",
+                provider=self.name,
+                timeout=True,
             ) from exc
         except httpx.HTTPError as exc:
             raise TransientModelError(
@@ -166,7 +171,23 @@ class AnthropicProvider(BaseProvider):
             ) from exc
         return self._decode(data, elapsed)
 
+    @staticmethod
+    def _parse_usage(raw_usage: object) -> Usage | None:
+        """Normalise usage, or ``None`` when the endpoint reported none."""
+        if not isinstance(raw_usage, dict) or not raw_usage:
+            return None
+        return Usage(
+            input_tokens=int(raw_usage.get("input_tokens") or 0),
+            output_tokens=int(raw_usage.get("output_tokens") or 0),
+            cached_input_tokens=int(raw_usage.get("cache_read_input_tokens") or 0),
+            estimated=False,
+        )
+
     def _decode(self, data: dict[str, Any], elapsed: float) -> ModelResponse:
+        # Usage is observed before the content blocks so that a malformed
+        # block still leaves a record with the reported token counts.
+        usage = self._parse_usage(data.get("usage"))
+        self._observe_usage(usage)
         blocks = data.get("content") or []
         text_parts: list[str] = []
         calls: list[ToolCall] = []
@@ -182,22 +203,17 @@ class AnthropicProvider(BaseProvider):
                         arguments=dict(block.get("input") or {}),
                     )
                 )
-        raw_usage = data.get("usage") or {}
-        usage = Usage(
-            input_tokens=int(raw_usage.get("input_tokens") or 0),
-            output_tokens=int(raw_usage.get("output_tokens") or 0),
-            cached_input_tokens=int(raw_usage.get("cache_read_input_tokens") or 0),
-            estimated=False,
-        )
+        raw = dict(data)
+        raw["agent_squad_usage_reported"] = usage is not None
         return ModelResponse(
             text="".join(text_parts),
             tool_calls=calls,
-            usage=usage,
+            usage=usage if usage is not None else Usage(estimated=False),
             model=str(data.get("model") or self.model),
             provider=self.name,
             latency_s=elapsed,
             finish_reason=str(data.get("stop_reason") or "stop"),
-            raw=data,
+            raw=raw,
         )
 
     async def aclose(self) -> None:

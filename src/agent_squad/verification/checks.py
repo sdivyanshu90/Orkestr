@@ -166,16 +166,20 @@ async def run_criterion(
     if kind in (
         CheckKind.COMMAND_EXITS_ZERO,
         CheckKind.COMMAND_OUTPUT_MATCHES,
-        CheckKind.PYTEST_SELECTOR,
     ):
         command = _command_for(criterion)
         return await _run_command(
             criterion, command, workspace, sandbox_config, timeout_s
         )
 
-    return CheckOutcome(
-        _record(criterion, exit_code=1, error=f"unsupported check kind {kind.value}")
-    )
+    if kind == CheckKind.PYTEST_SELECTOR:
+        return await _run_pytest_selector(
+            criterion, workspace, sandbox_config, timeout_s
+        )
+
+    # ``CheckKind`` is closed and every member is handled above.  The type
+    # checker proves this branch exhaustive, so a fallback here would be dead
+    # code; adding a new kind must extend the dispatch above instead.
 
 
 def _command_for(criterion: AcceptanceCriterion) -> tuple[str, ...]:
@@ -188,6 +192,104 @@ def _command_for(criterion: AcceptanceCriterion) -> tuple[str, ...]:
         selector = str(spec["selector"])
         return tuple([*command, selector])
     return tuple(str(part) for part in spec["command"])
+
+
+async def _run_pytest_selector(
+    criterion: AcceptanceCriterion,
+    workspace: Path,
+    sandbox_config: SandboxConfig,
+    timeout_s: float,
+) -> CheckOutcome:
+    """Run a pytest selector and judge what it actually reported.
+
+    The exit code alone is not a verdict, and for pytest it is actively
+    misleading in two ways the policy names explicitly:
+
+    * **a skipped required test still exits zero**.  The test did not run,
+      so the behaviour it was supposed to check is unverified; accepting
+      it is a false success.
+    * **zero collected tests exits zero in some configurations**, and
+      exits five in others.  Either way, "nothing ran" is not "the
+      required behaviour holds".
+
+    The summary line is parsed because it is the only place pytest states
+    how many tests passed, failed or were skipped.
+    """
+    command = _command_for(criterion)
+    sandbox = Sandbox(sandbox_config)
+    started = utcnow()
+    try:
+        result = await sandbox.run(list(command), cwd=workspace, timeout_s=timeout_s)
+    except ToolError as exc:
+        return CheckOutcome(_record(criterion, exit_code=None, error=exc.message))
+
+    combined = f"{result.stdout}\n{result.stderr}"
+    counts = _pytest_counts(combined)
+    allow_skipped = bool(criterion.spec.get("allow_skipped", False))
+    reasons: list[str] = []
+    if result.timed_out:
+        reasons.append("pytest timed out")
+    if result.exit_code != 0:
+        reasons.append(f"pytest exited {result.exit_code}")
+    if counts["collected"] == 0:
+        reasons.append("no test was collected")
+    elif counts["passed"] == 0 and counts["failed"] == 0 and counts["skipped"] == 0:
+        reasons.append("pytest reported no usable result")
+    if counts["passed"] == 0 and counts["collected"] > 0:
+        reasons.append("no test passed")
+    if counts["failed"]:
+        reasons.append(f"{counts['failed']} test(s) failed")
+    if counts["errors"]:
+        reasons.append(f"{counts['errors']} collection/teardown error(s)")
+    if counts["skipped"] and not allow_skipped:
+        reasons.append(
+            f"{counts['skipped']} selected test(s) were skipped, so the "
+            "behaviour they check is unverified"
+        )
+    ok = not reasons
+    return CheckOutcome(
+        _record(
+            criterion,
+            command=command,
+            exit_code=result.exit_code,
+            passed=ok,
+            predicates={
+                "exit_code_zero": result.exit_code == 0,
+                "tests_collected": counts["collected"] > 0,
+                "tests_passed": counts["passed"] > 0,
+                "no_failures": counts["failed"] == 0,
+                "no_errors": counts["errors"] == 0,
+                "no_unexpected_skips": counts["skipped"] == 0 or allow_skipped,
+            },
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_s=result.duration_s,
+            started_at=started,
+            error=None if ok else "; ".join(reasons),
+        )
+    )
+
+
+def _pytest_counts(output: str) -> dict[str, int]:
+    """The counts pytest states in its summary line.
+
+    Only the summary is parsed, not the per-test progress characters: the
+    summary is the part of the output pytest guarantees, and the progress
+    characters differ between verbosity levels and plugins.
+    """
+    counts = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+    patterns = {
+        "passed": r"(\d+) passed",
+        "failed": r"(\d+) failed",
+        "skipped": r"(\d+) skipped",
+        "errors": r"(\d+) errors?",
+    }
+    for key, pattern in patterns.items():
+        match = re.search(pattern, output)
+        if match:
+            counts[key] = int(match.group(1))
+    counts["collected"] = sum(counts.values())
+    return counts
 
 
 async def _run_command(

@@ -39,7 +39,6 @@ KNOWN_INDIRECT = {
     "model_copy",
     # Enum members.
     "value",
-    "name",
     # Helpers used through attribute access.
     "explain",
     "summary",

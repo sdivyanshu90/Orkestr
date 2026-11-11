@@ -20,6 +20,7 @@ call, and ``unavailable=True`` simulates an endpoint that is down.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from ..errors import ModelError, TransientModelError
@@ -32,6 +33,7 @@ from .base import (
     Usage,
     estimate_tokens,
 )
+from .ledger import RequestLedger, RequestPhase
 
 BRIEF_START = "<<<SQUAD_TASK_BRIEF>>>"
 BRIEF_END = "<<<END_SQUAD_TASK_BRIEF>>>"
@@ -68,12 +70,17 @@ class MockProvider(BaseProvider):
         model: str = "mock-deterministic-v1",
         *,
         failures: int = 0,
-        failure_error: type[Exception] = TransientModelError,
+        # An exception *factory*: project errors take structured keyword
+        # arguments, so a bare ``type[Exception]`` would be too narrow even
+        # though every injected class is an ``Exception`` subclass.
+        failure_error: Callable[..., Exception] = TransientModelError,
         unavailable: bool = False,
         latency_s: float = 0.0,
         scripted: list[ModelResponse | Exception] | None = None,
+        ledger: RequestLedger | None = None,
+        phase: RequestPhase = RequestPhase.OTHER,
     ) -> None:
-        super().__init__(model=model)
+        super().__init__(model=model, ledger=ledger, phase=phase)
         self._remaining_failures = failures
         self._failure_error = failure_error
         self._unavailable = unavailable
@@ -114,8 +121,13 @@ class MockProvider(BaseProvider):
             item = self._scripted.pop(0)
             if isinstance(item, Exception):
                 raise item
+            self._observe_usage(item.usage)
             return item
-        return self._synthesise(request)
+        response = self._synthesise(request)
+        # The estimate is deliberately labelled: it is a measurement of the
+        # local estimator, not a claim that the endpoint reported tokens.
+        self._observe_usage(response.usage)
+        return response
 
     # ------------------------------------------------------------ synthesis
 
