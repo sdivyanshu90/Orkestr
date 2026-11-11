@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The original worktree/capability split remains important. Development mode is best effort; hardened mode now uses a supported containment backend, private HOME and capability probes, refusing unavailable boundaries. Command scanning is not a proof of arbitrary script behavior. Read the current security model for provider authority, host capabilities and remaining qualification requirements.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 Multiple agents edit the same repository concurrently. That creates three

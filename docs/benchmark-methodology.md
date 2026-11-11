@@ -1,5 +1,9 @@
 # Benchmark methodology
 
+[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)
+
+**Scope:** methodology for the original deterministic fixture experiment, with links to later local measurements. Historical worker-gate semantics are not the newer final request-contract semantics. Re-running changed code creates a new experiment; write new artifacts rather than overwrite the published snapshots.
+
 This document describes how the orchestration efficiency laboratory is
 designed, what it measures, and — just as importantly — what it **cannot**
 show. A benchmark that cannot produce an unfavourable result is not a

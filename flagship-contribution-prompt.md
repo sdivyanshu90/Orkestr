@@ -1,3 +1,16 @@
+# Historical project build brief
+
+[Current project overview](README.md) · [Documentation](docs/README.md)
+· [Current roadmap](docs/roadmap.md)
+
+This is the original contribution/build brief, retained as project history. Its
+instructions and desired features are not a claim that they are implemented,
+qualified or the current delivery order. For executable setup, current architecture
+and strict evidence requirements, use the linked documentation. The original text
+is preserved below; it is not an active agent instruction file.
+
+---
+
 # Prompt: Find Your One Flagship Open-Source Contribution (the 9+ Move)
 
 > **What this is:** a self-contained research prompt you can paste into any agent with

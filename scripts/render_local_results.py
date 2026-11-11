@@ -58,6 +58,12 @@ def render(rows: list[dict]) -> str:
     out: list[str] = []
     out.append("# Local-model benchmark: results\n")
     out.append(
+        "[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)\n"
+    )
+    out.append(
+        "**Historical workflow snapshot: 2026-11-10.** The tables retain the then-current runtime gates and accounting. They must not be reinterpreted as independently accepted code under the newer request contract. Cancellation and missing-usage treatment are stated below; later code requires a new experiment.\n"
+    )
+    out.append(
         "**Status: measured.** Completed-trial measurements were produced by "
         "`agent-squad benchmark --local` on the development host "
         "(6 vCPU, 8.7 GiB RAM, RTX 3050 with 4 GB VRAM). "

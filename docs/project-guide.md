@@ -146,6 +146,65 @@ currently derives its exit code from execution status. A consumer that requires
 request acceptance must explicitly check `contract.outcome == "accepted"` and
 handle absent, rejected, inconclusive, timed-out and cancelled verdicts.
 
+## Reading the worked example as evidence
+
+A useful review starts with the actual request and candidate, then asks what each
+observation establishes. For the rounding example, the following table describes
+the intended distinction; inspect the run's recorded verdict for its actual case.
+
+| Owner criterion | Base observation | Candidate observation | Interpretation |
+|---|---|---|---|
+| `calc.py` exists | Already true | Still true after implementation edits | A preserved baseline property, not proof of a new helper by itself |
+| New rounding symbol exists | False | True | Evidence of the requested structural addition |
+| A change was produced | False for the base | True for the combined change | Evidence of a non-empty candidate, not functional correctness |
+| New test module exists | False | True | Evidence that the requested test file was added |
+| Selected rounding tests pass | Missing/failing on base | Passing on candidate | Evidence for those selected behaviors under the recorded environment |
+
+The owner still has to ask whether these checks are sufficient. A function can
+have the right name and incorrect behavior. A worker-created test can assert too
+little. A previously passing regression suite can miss the newly introduced edge
+case. These are specification/oracle limits, not problems solved by adding a
+second agent or hashing the same weak check.
+
+A condensed result might contain the following fields. This is a structural
+excerpt, not a complete response schema or a new benchmark measurement:
+
+```json
+{
+  "status": "succeeded",
+  "contract": {
+    "outcome": "accepted"
+  }
+}
+```
+
+If the contract field is absent or its outcome is different, automation must not
+silently substitute `status`. Read the full check records and contract/candidate
+identities before acting on the result. Human authorization for a commit or push
+is a separate decision from whether the candidate passed the request checks.
+
+## Where time and cost go
+
+A useful conceptual decomposition is:
+
+```text
+run time = startup + inspection + planning + scheduled critical path
+         + final verification/integration + teardown
+```
+
+Queueing, retries and contention contribute to those terms; this is an explanatory
+decomposition rather than the selector's literal prediction formula. A two-task
+dependency chain has one ready task at each stage, so configuring two workers
+cannot eliminate that dependency. Independent tasks offer overlap, but provider
+serialization, shared files and memory limits can remove the expected benefit.
+
+Token/cost overhead can rise even when the wall time improves. Workers may receive
+overlapping repository context, a reviewer may add calls, and a fallback repeats
+some work. Conversely, shorter prompts and a better task split may help a small
+model fit a context limit. Measure the whole request ledger and the independently
+accepted result together. Optimizing token throughput while losing acceptance is
+not the same as improving developer productivity.
+
 ## How the system remembers what happened
 
 Each run has its own data directory and SQLite database. Events record decisions

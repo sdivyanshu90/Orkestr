@@ -1,5 +1,9 @@
 # Local-model benchmark: results
 
+[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)
+
+**Historical workflow snapshot: 2026-11-10.** The tables retain the then-current runtime gates and accounting. They must not be reinterpreted as independently accepted code under the newer request contract. Cancellation and missing-usage treatment are stated below; later code requires a new experiment.
+
 **Status: measured.** Completed-trial measurements were produced by `agent-squad benchmark --local` on the development host (6 vCPU, 8.7 GiB RAM, RTX 3050 with 4 GB VRAM). The tables can be regenerated from the raw trial records.
 
 Read [`docs/local-benchmark-methodology.md`](local-benchmark-methodology.md) for workload limits, concurrency and accounting caveats.

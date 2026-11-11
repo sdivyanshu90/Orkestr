@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The runtime now includes owner request contracts, provider accounting, phase/deadline scope, resource ownership and replay. Owning the implementation makes these seams inspectable, but it also makes their integration and independent validation the project's responsibility. See the current architecture and qualification policy before treating a design intention as a guarantee.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 The system needs a task planner, a dependency-aware concurrent scheduler, a

@@ -1,95 +1,76 @@
-# Example requests
+# Structured example requests
 
-Two structured request files that the deterministic mock provider can
-execute end to end, with no API key and no network access.
+[Documentation home](../docs/README.md) · [Quickstart](../docs/getting-started.md)
+· [Request concepts](../docs/concepts.md)
 
-| File | Shape | Demonstrates |
+These examples use the deterministic mock provider to exercise real tool calls,
+worktrees, verification and integration without downloading a model. They are
+synthetic fixtures, not a realistic model coding benchmark.
+
+| File | Shape | What to inspect |
 |---|---|---|
-| `request-rounding.json` | Two tasks, the second depends on the first | Ordered execution, stacked worktrees, dependency-ordered patch integration, real pytest verification |
-| `request-parallel.json` | Two independent tasks, disjoint files | Parallel fan-out, the case where the strategy selector should choose more than one worker |
+| [request-rounding.json](request-rounding.json) | Implementation followed by dependent tests | Dependency-aware bases, new/preserved criteria and final candidate |
+| [request-parallel.json](request-parallel.json) | Two independent tasks | Ready-set execution, actual provider concurrency and integration |
 
-## Running them
+Use the [quickstart](../docs/getting-started.md) to create a disposable fixture
+repository. From an activated environment and the Orkestr clone:
 
 ```bash
-# Create a repository to work on
-mkdir -p /tmp/demo && cd /tmp/demo && git init -b main
-cat > calc.py <<'PY'
-def add(a, b):
-    return a + b
-
-
-def subtract(a, b):
-    return a - b
-PY
-mkdir -p tests
-cat > conftest.py <<'PY'
-import os
-import sys
-sys.path.insert(0, os.path.dirname(__file__))
-PY
-cat > tests/test_calc.py <<'PY'
-from calc import add, subtract
-
-
-def test_add():
-    assert add(2, 3) == 5
-
-
-def test_subtract():
-    assert subtract(5, 2) == 3
-PY
-git add -A && git commit -m "initial"
-
-# Plan without executing
-agent-squad plan "Add a rounding helper" --repo . \
-    --spec /home/somu/Orkestr/examples/request-rounding.json
-
-# Execute
-agent-squad run "Add a rounding helper" --repo . \
-    --spec /home/somu/Orkestr/examples/request-rounding.json
+agent-squad plan "Add a rounding helper" --repo /path/to/disposable/repo \
+  --spec /absolute/path/to/Orkestr/examples/request-rounding.json --json
+agent-squad run "Add a rounding helper" --repo /path/to/disposable/repo \
+  --spec /absolute/path/to/Orkestr/examples/request-rounding.json \
+  --data-dir /path/to/disposable/run-data --json
 ```
 
-## The request format
+These are placeholders, not machine-specific paths. Inspect the returned
+`contract.outcome` as well as execution status. The CLI exit code is not a
+substitute for request acceptance. The resulting patch bundle is reviewable;
+the normal example does not push a branch.
 
-A request is a JSON object with an `objective` and a list of `tasks`. Each
-task declares:
+## Request fields
 
-| Field | Required | Meaning |
+The JSON object contains an objective and a task list. Each task has a unique
+`id`, title and objective. Optional fields include role, dependencies, scope,
+priority, complexity, estimated duration and resource/attempt limits. Typed
+validation and graph checks reject invalid fields/dependencies before work.
+
+| Field | Meaning |
+|---|---|
+| `depends_on` | Prerequisite task IDs; cycles and missing IDs are invalid |
+| `include_paths` / `exclude_paths` | Intended allowed/excluded file scope |
+| `anticipated_files` | Scheduling/conflict-estimation input, not proof of all actual edits |
+| `acceptance_criteria` | Owner-supplied required/supplementary checks |
+| `edits` | Concrete mock edit hints; real providers generate their own calls |
+| `max_attempts`, `token_budget`, `cost_budget_usd` | Task limits subject to run policy |
+
+Criteria IDs must not silently name different requirements in different tasks.
+The contract builder validates semantic identity. A model may propose additional
+checks but cannot authorize weakening an original required check.
+
+## Check kinds
+
+| Kind | Key specification | Meaning |
 |---|---|---|
-| `id` | yes | Unique within the request; used as the DAG node id |
-| `title`, `objective` | yes | What the worker is being asked to do |
-| `role` | no | `implementer` (default), `test_engineer`, `reviewer`, `supervisor` |
-| `depends_on` | no | Task ids that must complete first |
-| `edits` | no | Concrete file changes: `{path, content, mode}` |
-| `acceptance_criteria` | yes | Deterministic checks the verifier re-executes |
-| `anticipated_files` | no | Files this task is expected to touch; used for conflict prediction |
-| `include_paths` / `exclude_paths` | no | Scope restriction enforced by the capability layer |
-| `priority`, `complexity`, `estimated_duration_s` | no | Scheduling inputs |
-| `max_attempts`, `token_budget`, `cost_budget_usd` | no | Per-task limits |
+| `file_exists` | `path` | A path exists |
+| `file_contains` | `path`, `pattern`, optional `regex` | Required content matches |
+| `file_not_contains` | `path`, `pattern`, optional `regex` | Forbidden content is absent |
+| `command_exits_zero` | `command` list | The executed command succeeds |
+| `command_output_matches` | `command`, `pattern`, optional `regex` | Exit success **and** output predicate success |
+| `pytest_selector` | `selector`, optional `command` | Selected tests provide passing required evidence |
+| `diff_nonempty` / `diff_empty` | Empty spec | Candidate changes are present/absent under the check context |
+| `llm_review` / `manual` | Advisory context | Opinion/manual requirement, not deterministic passing evidence |
 
-### Acceptance criterion kinds
+A criterion's required flag affects task checks; understand how required request
+outcomes are built before relying on supplementary checks for acceptance.
+Selected tests that collect no evidence or skip required evidence must not be
+interpreted as success merely because a command exits zero.
 
-| Kind | Spec | Meaning |
-|---|---|---|
-| `file_exists` | `path` | The file exists |
-| `file_contains` | `path`, `pattern`, optional `regex` | The pattern appears in the file |
-| `file_not_contains` | `path`, `pattern` | The pattern does not appear |
-| `command_exits_zero` | `command` (list) | The command exits zero |
-| `command_output_matches` | `command`, `pattern`, optional `regex` | The command exits zero *and* its output matches |
-| `pytest_selector` | `selector`, optional `command` | pytest with the selector exits zero |
-| `diff_nonempty` | — | The task produced changes |
-| `diff_empty` | — | The task produced no changes |
-| `llm_review` | — | Advisory only; recorded as advisory, never as passed |
-| `manual` | — | Advisory only; requires a human |
+## Strengthen these examples for real work
 
-A criterion with `"required": true` (the default) blocks the task when it
-fails. A criterion with `"required": false` is recorded but does not block.
-
-### Notes
-
-- `edits` is consumed by the deterministic mock provider. A real model
-  provider receives the brief and produces its own tool calls; the `edits`
-  field is ignored by it.
-- `depends_on` ids must exist. A cycle is rejected before execution starts.
-- The `include_paths` / `exclude_paths` scope is enforced by the policy
-  engine, which the agent loop consults before every tool invocation.
+The rounding fixture is not an exhaustive specification for numerical behavior.
+Declare input domain, precision, overflow, negative values and expected results
+with an independently owned oracle. Keep baseline regression material protected,
+review candidate changes to tests/configuration, and test the final union of
+patches. A worker authoring both code and a trivial test is not independent
+verification.

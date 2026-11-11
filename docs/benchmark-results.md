@@ -1,5 +1,9 @@
 # Benchmark results
 
+[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)
+
+**Read this as versioned evidence.** The original mock experiment and appended local tables describe their recorded releases, workloads and accounting. They are not current independent acceptance rates or a general model/hardware ranking. The evidence guide separates those experiments from the later generated corpus and clean timing sample.
+
 **Status: measured.** Every number below was produced by
 `agent-squad benchmark --suite full --trials 3` on the development host and
 is reproducible from `benchmarks/results/suite-full-3trials.json`.

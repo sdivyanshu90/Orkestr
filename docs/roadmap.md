@@ -1,5 +1,10 @@
 # Roadmap toward 9.5+/10
 
+[Documentation home](README.md) · [Current status](../PROJECT_STATUS.md)
+· [Evidence interpretation](evaluation.md)
+
+Delivery order and implementation context; formal qualification belongs to the scoring policy.
+
 **Updated: 2026-11-11. Status: implementation roadmap; qualification is evidence-gated.**
 
 A 9.5 rating should mean a developer can trust the result, reproduce the

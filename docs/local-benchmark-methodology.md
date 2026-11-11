@@ -1,5 +1,9 @@
 # Local-model benchmark methodology
 
+[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)
+
+**Historical protocol: 2026-11-10.** This page describes the measured eight-checkpoint workflow sweep and companion probes, including their cancellation, accounting and residual-server limitations. New contract/resource code does not retroactively strengthen those results. Later ownership-checked timing has separate artifacts.
+
 This experiment runs real local GGUF models through Orkestr's production
 OpenAI-compatible provider, LLM planner, worker tool loop, policy engine and
 verification gate. It measures compatibility with this bounded agent workflow.

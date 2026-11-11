@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The current store includes run ownership/fencing, message deduplication, approvals, checkpoints and projections. WAL backups must be consistent, and external effects remain outside a local exactly-once transition guarantee. Retention/compaction is not implied by the append-oriented design. The database is not cryptographically protected against a host user who can edit it.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 The runtime needs a durable record of a run that can answer three different

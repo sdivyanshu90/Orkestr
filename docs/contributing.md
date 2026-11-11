@@ -12,6 +12,7 @@ and dashboard dependencies require their own setup; there is no `api` extra.
 ```bash
 python -m ruff check src tests scripts
 python -m mypy
+python scripts/check_docs.py
 python -m pytest
 ```
 

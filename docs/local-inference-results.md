@@ -1,5 +1,9 @@
 # Fixed-score local inference benchmark
 
+[Documentation home](README.md) · [Evidence guide](evaluation.md) · [Reproduction](reproduction.md)
+
+**Historical direct-probe snapshot: 2026-11-10.** Fixed-task scores remain auditable, but the residual-server timing caveat remains in force. A later clean sample demonstrates resource ownership separately; it does not replace these measurements or establish general model rankings.
+
 Eight local GGUF checkpoints, five fixed tasks per checkpoint, plus the same five tasks on Qwen2.5-Coder using CPU only. One foreground model configuration and one benchmark request run at a time. All responses, including failures, are retained in [local-inference.json](../benchmarks/results/local-inference.json).
 
 MiniMax and Kimi entries are third-party Qwen-based distillations; results do not describe official MiniMax or Moonshot models.

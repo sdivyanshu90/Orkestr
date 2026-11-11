@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The owner contract is captured before model planning. Initial plans and bounded revisions must preserve required criterion semantics; model text cannot directly authorize a state transition or protected action. The final combined candidate is judged separately from worker completion. Deterministic control means explicit decision logic, not that models or execution timings are deterministic.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 A multi-agent system has at least four kinds of decision:

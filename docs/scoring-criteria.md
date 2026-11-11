@@ -1,5 +1,10 @@
 # Strict project scoring and qualification criteria
 
+[Documentation home](README.md) · [Current status](../PROJECT_STATUS.md)
+· [Evidence interpretation](evaluation.md)
+
+Normative internal qualification policy. This editorial refresh does not change weights, thresholds or the 18 mandatory criteria.
+
 **Policy version: 1.0 · Adopted: 2026-11-11.**
 
 This is the authoritative policy for a **formal Orkestr project score**. It

@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The mock still emits tool calls that exercise files, Git workspaces and verification. It does not reason about an unfamiliar bug, discover a correct algorithm or supply a real inference latency distribution. Real compatible endpoints, historical direct probes and generated verifier cases are separate evidence categories with their own limits.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 The system's behaviour lives in the parts that are hardest to observe: a

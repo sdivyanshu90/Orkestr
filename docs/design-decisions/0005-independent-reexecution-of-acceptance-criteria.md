@@ -3,6 +3,18 @@
 - Status: Accepted
 - Date: 2026-11-10
 
+## Reading this decision today
+
+[Decision index](README.md) · [Current architecture](../architecture.md)
+· [Security](../security-threat-model.md) · [Qualification](../scoring-criteria.md)
+
+**Original decision: accepted on 2026-11-10. Context reviewed: 2026-11-11.**
+
+The original task verifier is now complemented by an immutable owner contract and a final combined-tree contract gate. Complete check results, preserved invariants, valid no-ops and protected evaluator material matter. A predicate can fail despite exit code zero. The historical task-only measurements must not be relabeled as request-level acceptance under the newer gate.
+
+The remaining sections preserve the original decision rationale and alternatives.
+Their historical implementation descriptions are not a release qualification.
+
 ## Context
 
 The central failure mode of LLM-driven software engineering is not a crash

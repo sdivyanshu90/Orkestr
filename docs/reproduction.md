@@ -1,5 +1,12 @@
 # Reproduction
 
+[Documentation home](README.md) · [Environment setup](getting-started.md)
+· [Evidence interpretation](evaluation.md) · [Qualification](scoring-criteria.md)
+
+**Procedure, not a certificate.** Use a clean checkout and the exact release being
+reviewed. Some commands write generated evidence; retain historical artifacts
+before running them. A listed CI workflow is not evidence that its jobs passed.
+
 This is the procedure an independent reviewer follows on a clean machine.
 It exists because `docs/scoring-criteria.md` M2 requires that a reviewer be
 able to reproduce the installation, the verifier verdicts, the
@@ -19,7 +26,7 @@ intervals are the evidence.
 | Dimension | Supported | Notes |
 |---|---|---|
 | OS | Linux x86-64 (Ubuntu 24.04 tested) | The containment boundary uses Linux namespaces. macOS/Windows are not a supported hardened environment. |
-| Python | 3.11, 3.12, 3.13 | `requires-python = ">=3.11"`; CI runs all three. |
+| Python | 3.11, 3.12, 3.13 | `requires-python = ">=3.11"`; the CI workflow declares all three. |
 | Providers | `mock`, `openai_compat`, `anthropic` | `mock` is deterministic and needs no network. `openai_compat` is what a local `llama-server` speaks. |
 | Containment | `bubblewrap` (hardened profile), none (development profile) | `unshare --net` alone is *not* sufficient for the hardened profile: it cannot isolate the filesystem, so a host that offers only `unshare` is refused. |
 | Authority | Single user, single host, local filesystem | There is no multi-user model and no distributed execution. |
@@ -28,9 +35,9 @@ Anything outside this table is not claimed. The lock additionally carries
 wheel hashes for the generator host's CPython 3.14 so the development
 `.venv` can install the same file; 3.14 is not a supported release
 combination and is not in CI. In particular, a 9.5+ score
-also requires `S3` (an implementation-independent audit), `U1`/`U2`
-(30–90 days of external usage) and `V4` (a second independent team), none
-of which is a reproduction step.
+also requires mandatory `S3` (independent review) and `U1` (external operation),
+which are not installation/reproduction steps. `U2` and `V4` are stretch criteria
+for scores above 9.5, not additional mandatory gates for 9.5 itself.
 
 ---
 
@@ -319,3 +326,21 @@ file on disk, so a record cannot drift from the release it describes.
 ```bash
 python scripts/build_assessment.py --check
 ```
+
+## Interpreting reproduction outcomes
+
+A successful reproduction records its environment, command, scope and raw result.
+A default corpus test is a stratified sample unless the full-corpus flag is set.
+A capability-dependent skip documents an unavailable boundary; it cannot qualify
+that host as supporting the skipped behavior. A timed-out suite is incomplete,
+not a pass. Preserve pytest importlib mode when overriding `addopts`.
+
+The base package currently has no `api` extra. Optional FastAPI/uvicorn setup is
+explicit in [configuration](configuration.md), and optional API/UI evidence must
+be established separately rather than inferred from the base lock or a skipped
+test. The developer Python 3.14 environment is outside the stated release matrix.
+
+Assessment evidence is pinned to its declared commit and can become stale after
+source, documentation or configuration changes. `build_assessment.py --check`
+validates/recomputes without publishing a replacement record. Do not convert
+INCONCLUSIVE or MISSING to PASS without the policy's independent reproduction.
