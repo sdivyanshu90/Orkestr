@@ -43,6 +43,7 @@ from .providers.registry import ProviderRouter, build_providers
 from .runtime.deadline import RunDeadline
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
+from .security.profiles import IsolationGuard, get_profile
 from .store.db import Database
 from .store.events import EventLog, EventType
 from .store.state import StateStore
@@ -280,6 +281,16 @@ class Orchestrator:
         warnings: list[str],
     ) -> RunOutcome:
         self.logger.info("run started", objective=objective[:120])
+
+        # The isolation profile is checked *before* anything runs: a profile
+        # that promises a boundary must either have it or refuse to start.
+        profile = get_profile(self.config.isolation_profile)
+        isolation = IsolationGuard(profile, self.config.sandbox).check()
+        self.logger.info(
+            "isolation profile verified",
+            profile=isolation.profile,
+            boundaries=len(isolation.boundaries),
+        )
 
         # One absolute deadline for the whole run, reserved time included.
         deadline = RunDeadline(

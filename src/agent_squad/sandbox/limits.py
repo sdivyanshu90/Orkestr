@@ -94,7 +94,12 @@ def _preexec(cpu_time: int, memory_mb: int, max_file_mb: int):
 def build_environment(
     sandbox: SandboxConfig, extra: dict[str, str] | None = None
 ) -> dict[str, str]:
-    """Construct the child environment."""
+    """Construct the child environment.
+
+    The hardened settings are applied unconditionally: a repository cannot
+    opt out of them, because the orchestrator sets them for every command it
+    runs.  They are *enforced settings*, not prompt instructions.
+    """
     env: dict[str, str] = {}
     for key in sandbox.env_allowlist:
         value = os.environ.get(key)
@@ -108,6 +113,12 @@ def build_environment(
     # is the real control.
     env["no_proxy"] = "*"
     env["NO_PROXY"] = "*"
+    # Ambient git configuration and hooks are executable code that would run
+    # with the orchestrator's privileges, so they are disabled.
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ASKPASS"] = ""
     if extra:
         env.update({k: str(v) for k, v in extra.items()})
     return env

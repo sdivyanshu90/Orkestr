@@ -213,6 +213,14 @@ class RunConfig(_Base):
             "limit while never breaching one."
         ),
     )
+    isolation_profile: str = Field(
+        default="development",
+        description=(
+            "The isolation profile the run executes under.  'development' is "
+            "best-effort containment; 'hardened' refuses to run unless the "
+            "boundaries it promises can actually be established."
+        ),
+    )
     teardown_reserve_s: float = Field(
         default=5.0,
         ge=0,
