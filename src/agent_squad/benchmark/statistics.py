@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 
 @dataclass
@@ -256,3 +256,276 @@ def compare(
         "baseline": baseline.to_dict(),
         "candidate": candidate.to_dict(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Exact binomial confidence limits
+# ---------------------------------------------------------------------------
+#
+# A normal approximation is not good enough for the claims this project
+# makes.  The interesting cases sit at the boundary: zero false accepts in a
+# few hundred cases, and an acceptance rate close to one.  A Wald interval on
+# a proportion of zero has zero width, which is not an interval at all, and
+# the Wilson interval is still an approximation whose coverage is only
+# approximate.  The Clopper-Pearson ("exact binomial") limits invert the
+# regularized incomplete beta function and are exact by construction: they
+# are the widest interval that still attains the nominal coverage.
+
+
+def _log_beta(a: float, b: float) -> float:
+    """``log B(a, b)`` computed from log-gamma to avoid overflow."""
+    return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+def _beta_continued_fraction(a: float, b: float, x: float) -> float:
+    """Lentz's continued fraction for the incomplete beta function.
+
+    This is the standard modified Lentz algorithm: it evaluates the
+    continued fraction by repeated modification of ``c`` and ``d``, which
+    converges for the parameter ranges the Clopper-Pearson inversion needs.
+    """
+    tiny = 1e-300
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, 400):
+        m2 = 2 * m
+        num = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + num * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + num / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        num = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + num * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + num / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 3e-16:
+            break
+    return h
+
+
+def regularized_incomplete_beta(x: float, a: float, b: float) -> float:
+    """The regularized incomplete beta function ``I_x(a, b)``.
+
+    ``I_x(a, b)`` is the probability that a Beta(a, b) variate is at most
+    ``x``.  It is the distribution function the Clopper-Pearson limits are
+    built from, so it is exposed here rather than hidden inside the bound
+    helpers: a reviewer who wants to check the arithmetic can evaluate the
+    function at the reported limit and confirm it equals the target.
+    """
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    # The prefactor is x**a * (1 - x)**b / B(a, b); it is assembled from
+    # log-gamma terms so that large shapes do not overflow.
+    log_front = -_log_beta(a, b) + a * math.log(x) + b * math.log1p(-x)
+    front = math.exp(log_front)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _beta_continued_fraction(a, b, x) / a
+    return 1.0 - front * _beta_continued_fraction(b, a, 1.0 - x) / b
+
+
+def beta_quantile(a: float, b: float, probability: float) -> float:
+    """The ``probability`` quantile of the Beta(a, b) distribution.
+
+    ``I_x(a, b)`` is monotone increasing in ``x``, so the quantile is found
+    by bisection.  Bisection is slower than Newton but it cannot diverge,
+    which matters because this function is used to certify a threshold.
+    """
+    if not 0.0 < a and not 0.0 < b:
+        raise ValueError("beta shape parameters must be positive")
+    if probability <= 0.0:
+        return 0.0
+    if probability >= 1.0:
+        return 1.0
+    low = 0.0
+    high = 1.0
+    for _ in range(200):
+        mid = 0.5 * (low + high)
+        if regularized_incomplete_beta(mid, a, b) < probability:
+            low = mid
+        else:
+            high = mid
+    return 0.5 * (low + high)
+
+
+def clopper_pearson_upper(
+    successes: int, trials: int, *, confidence: float = 0.95
+) -> float:
+    """The exact one-sided upper confidence limit on a binomial rate.
+
+    ``successes`` events were observed in ``trials`` independent trials.
+    The returned value ``p`` satisfies ``P(X >= successes) = 1 - alpha`` for
+    ``X ~ Binomial(trials, p)``, so ``p`` is the largest rate consistent
+    with the observation at the stated confidence level.
+
+    Zero events is the case this exists for: with ``successes == 0`` the
+    limit is ``1 - alpha ** (1 / trials)``, which for 300 trials and
+    ``alpha = 0.05`` is about 0.994% -- the figure the scoring policy
+    quotes.
+    """
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    if not 0 <= successes <= trials:
+        raise ValueError("successes must be between 0 and trials")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be strictly between 0 and 1")
+    if successes >= trials:
+        return 1.0
+    return beta_quantile(successes + 1.0, trials - successes, confidence)
+
+
+def clopper_pearson_lower(
+    successes: int, trials: int, *, confidence: float = 0.95
+) -> float:
+    """The exact one-sided lower confidence limit on a binomial rate.
+
+    The mirror image of :func:`clopper_pearson_upper`: the returned value
+    ``p`` satisfies ``P(X >= successes) = alpha`` for ``X ~ Binomial(trials,
+    p)``.  With every trial successful the limit is ``alpha ** (1 /
+    trials)``, so 100 of 100 accepted cases give a lower bound of about
+    95.1%.
+    """
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    if not 0 <= successes <= trials:
+        raise ValueError("successes must be between 0 and trials")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be strictly between 0 and 1")
+    if successes <= 0:
+        return 0.0
+    return beta_quantile(successes, trials - successes + 1.0, 1.0 - confidence)
+
+
+@dataclass
+class BinomialLimit:
+    """An exact binomial confidence statement about a rate."""
+
+    successes: int
+    trials: int
+    point_estimate: float
+    lower: float
+    """The one-sided lower limit (a floor on the true rate)."""
+    upper: float
+    """The one-sided upper limit (a ceiling on the true rate)."""
+    confidence: float = 0.95
+    method: str = "clopper-pearson"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "successes": self.successes,
+            "trials": self.trials,
+            "point_estimate": self.point_estimate,
+            "lower": self.lower,
+            "upper": self.upper,
+            "confidence": self.confidence,
+            "method": self.method,
+        }
+
+
+def binomial_limit(
+    successes: int, trials: int, *, confidence: float = 0.95
+) -> BinomialLimit:
+    """Both one-sided exact limits for a binomial rate, plus the estimate."""
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    return BinomialLimit(
+        successes=successes,
+        trials=trials,
+        point_estimate=successes / trials,
+        lower=clopper_pearson_lower(successes, trials, confidence=confidence),
+        upper=clopper_pearson_upper(successes, trials, confidence=confidence),
+        confidence=confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Clustering
+# ---------------------------------------------------------------------------
+#
+# A corpus whose cases are drawn from a handful of templates is not a set of
+# independent observations: two cases produced by the same template share
+# whatever the template's failure mode is, so their errors move together.
+# Treating them as independent would claim more precision than the design
+# supports.  The helpers below make that dependence explicit instead of
+# hiding it: they turn a set of clustered observations into an effective
+# sample size and the corresponding limit.
+
+
+def intra_cluster_correlation(
+    proportions: Sequence[float], sizes: Sequence[int]
+) -> float:
+    """The pooled intra-cluster correlation of a clustered proportion.
+
+    This is the ANOVA estimator: the between-cluster variance of the
+    cluster proportions, minus the within-cluster binomial variance,
+    expressed as a correlation.  A value of zero means the clusters behave
+    like independent draws; a value of one means every case in a cluster
+    shares the cluster's outcome exactly.
+
+    When every cluster proportion is identical the estimator is degenerate
+    and zero is returned: there is no *observed* evidence of clustering.
+    That is a statement about the data, not a claim that clustering is
+    impossible, and the caller is expected to report it as such.
+    """
+    if len(proportions) != len(sizes):
+        raise ValueError("proportions and sizes must have the same length")
+    if not proportions:
+        return 0.0
+    total = sum(sizes)
+    if total <= 0:
+        return 0.0
+    grand = sum(p * n for p, n in zip(proportions, sizes, strict=True)) / total
+    between = sum(n * (p - grand) ** 2 for p, n in zip(proportions, sizes, strict=True))
+    between /= total
+    within = sum(
+        n * p * (1.0 - p) for p, n in zip(proportions, sizes, strict=True)
+    ) / total
+    if within <= 0.0:
+        # Every observation in every cluster is the same value: there is no
+        # within-cluster binomial variance to subtract, so the correlation
+        # is not identified.  Report zero and let the caller treat the
+        # cluster-level bound as the conservative alternative.
+        return 0.0
+    raw = (between - within) / (between + within)
+    return max(0.0, min(1.0, raw))
+
+
+def kish_design_effect(average_cluster_size: float, rho: float) -> float:
+    """The Kish design effect for a clustered proportion.
+
+    ``DEFF = 1 + (m - 1) * rho`` inflates the variance of a clustered mean
+    by the factor by which the clusters' shared outcomes make the
+    observations less informative than independent ones.  The effective
+    sample size is then ``n / DEFF``.
+    """
+    if average_cluster_size <= 0:
+        raise ValueError("the average cluster size must be positive")
+    if not 0.0 <= rho <= 1.0:
+        raise ValueError("the intra-cluster correlation must be in [0, 1]")
+    return 1.0 + (average_cluster_size - 1.0) * rho
+
+
+def effective_sample_size(total: int, design_effect: float) -> float:
+    """The number of independent observations a clustered design supports."""
+    if total <= 0:
+        raise ValueError("total must be positive")
+    if design_effect <= 0:
+        raise ValueError("the design effect must be positive")
+    return total / design_effect

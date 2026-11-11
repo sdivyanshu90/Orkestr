@@ -155,6 +155,15 @@ class IsolationGuard:
     def _network_isolation_available(self) -> tuple[bool, str]:
         if self.sandbox.allow_network:
             return False, "the sandbox configuration allows network access"
+        backend = self._backend()
+        if backend == "bubblewrap":
+            # The containment backend provides the network namespace.  It is
+            # not assumed: the probe below executes a command inside the
+            # boundary and observes that the endpoint is unreachable.
+            return True, (
+                "network isolation is provided by the bubblewrap containment "
+                "backend and verified by the containment probe"
+            )
         unshare = shutil.which("unshare")
         if not unshare:
             return False, "unshare is not installed"
@@ -173,6 +182,17 @@ class IsolationGuard:
                 f"({proc.stderr.decode(errors='replace').strip()[:120]})"
             )
         return True, "unshare --net is available"
+
+    def _backend(self) -> str:
+        """The containment backend this run will use."""
+        requested = (self.sandbox.containment or "none").strip().lower()
+        if requested in ("", "none"):
+            return "none"
+        if requested == "auto":
+            from ..sandbox.containment import find_backend
+
+            return find_backend() or "none"
+        return requested
 
     def _isolated_home_available(self) -> tuple[bool, str]:
         """The private home must exist, and must not be the user's home.
@@ -279,11 +299,7 @@ class IsolationGuard:
         if self.workspace is None or self.private_home is None:
             self._probe_report = None
             return None
-        backend = self.sandbox.containment or "none"
-        if backend == "auto":
-            from ..sandbox.containment import find_backend
-
-            backend = find_backend() or "none"
+        backend = self._backend()
         if backend == "none":
             self._probe_report = None
             return None

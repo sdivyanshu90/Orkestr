@@ -1,0 +1,252 @@
+{
+  "policy_version": "1.0",
+  "scope": "Linux x86-64 (Ubuntu 24.04), Python 3.11-3.13, local providers only (mock, openai_compat, anthropic) against a locally hosted OpenAI-compatible server; single-user, single-host, local authority; no public service exposure and no distributed workers.",
+  "note": "Every decision below is the author's own. No criterion is marked PASS, because the policy requires a named independent reviewer for a PASS and no such reviewer has reproduced these results. INCONCLUSIVE means the implementation and its in-repo evidence exist but no independent party has reproduced them; MISSING means the artefacts the policy requires do not exist at all.",
+  "criteria": {
+    "C1": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must reproduce the output-mismatch counterexample through both the gate and the run entry point",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/verification/contract_gate.py", "description": "the verdict uses the complete check result (exit code and every match predicate), not the exit code alone"},
+        {"location": "src/agent_squad/verification/checks.py", "description": "every check executor records its complete verdict and the individual predicates"},
+        {"location": "tests/evaluation/test_adversarial_contracts.py", "description": "negative cases across the supported check kinds, including the exit-zero output mismatch through both entry points"}
+      ],
+      "counterexamples": [
+        "a command that exits zero while producing the wrong output was accepted by the previous implementation; the counterexample is now covered by tests/evaluation/test_adversarial_contracts.py"
+      ]
+    },
+    "C2": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must attempt contract mutation through planning, retry and replanning",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/models/contract.py", "description": "the immutable, content-hashed request contract and its outcome vocabulary"},
+        {"location": "src/agent_squad/planning/contract.py", "description": "the contract is built from the owner's declaration, never from the model's output"},
+        {"location": "tests/evaluation/test_adversarial_contracts.py", "description": "the contract cannot be weakened by a plan"}
+      ],
+      "counterexamples": []
+    },
+    "C3": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "the 300-case corpus must be complete and an independent reviewer must confirm zero false accepts with the stated confidence bound",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/benchmark/statistics.py", "description": "the evaluation statistics with complete denominators and clustered intervals"},
+        {"location": "tests/evaluation/test_adversarial_contracts.py", "description": "the hand-written adversarial corpus the generated corpus extends"}
+      ],
+      "counterexamples": []
+    },
+    "C4": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "an independent reviewer must attempt deletion, rewrite and modify-then-restore tampering through every worker execution path",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/verification/protected.py", "description": "protected verification material and its tamper detection"},
+        {"location": "src/agent_squad/security/capabilities.py", "description": "the capability layer that keeps write authority outside the worker's hands"}
+      ],
+      "counterexamples": []
+    },
+    "C5": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must confirm the CLI, API, persisted records and dashboard agree on every outcome",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/cli/main.py", "description": "the CLI entry point"},
+        {"location": "src/agent_squad/api/server.py", "description": "the HTTP API entry point"},
+        {"location": "tests/integration/test_dashboard_contract.py", "description": "the contract between the runtime and the dashboard"}
+      ],
+      "counterexamples": []
+    },
+    "R1": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "an independent reviewer must inject a blocking operation and a cancellation into every phase and confirm the D+5s bound",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/runtime/deadline.py", "description": "the absolute run deadline with the teardown reserve"}
+      ],
+      "counterexamples": []
+    },
+    "R2": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must run the 100-cycle lifecycle matrix on a clean host and confirm zero survivors within five seconds",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/runtime/registry.py", "description": "the process and artifact registry that owns what a run starts"},
+        {"location": "tests/recovery/test_resource_bounds.py", "description": "the lifecycle-cycle and resource-bound tests"}
+      ],
+      "counterexamples": []
+    },
+    "R3": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must attempt concurrent resume through the real entry points and confirm exactly one owner survives",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/orchestrator.py", "description": "ownership is acquired, heartbeated and released around every run"},
+        {"location": "src/agent_squad/recovery.py", "description": "a resume takes durable ownership too"},
+        {"location": "tests/recovery/test_authority_and_ownership.py", "description": "the ownership, fencing and dedup tests"}
+      ],
+      "counterexamples": []
+    },
+    "R4": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "an independent reviewer must reconcile the ledger against a recording endpoint with injected pre- and post-usage failures",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/providers/ledger.py", "description": "the request ledger and its usage-provenance rules"}
+      ],
+      "counterexamples": [
+        "the ledger existed without request-path integration; it was not reachable from any provider"
+      ]
+    },
+    "V1": {
+      "decision": "MISSING",
+      "implementation_status": "partial",
+      "blocked_on": "the policy requires at least 60 nontrivial tasks across 6 pinned real repositories with preregistered, independently reviewed task selection; this repository has a synthetic fixture corpus and one 64-trial local sweep, which does not satisfy it",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/local-benchmark-methodology.md", "description": "what the local sweep actually measured, and its limits"},
+        {"location": "benchmarks/results/suite-full-3trials.json", "description": "the raw records of the 64-trial local sweep"}
+      ],
+      "counterexamples": []
+    },
+    "V2": {
+      "decision": "MISSING",
+      "implementation_status": "partial",
+      "blocked_on": "the preregistered held-out corpus of V1 does not exist, so the acceptance rate and its confidence bound cannot be computed",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "benchmarks/results/suite-full-3trials.json", "description": "the raw records of the local sweep, which the contract gate later showed contained false successes"}
+      ],
+      "counterexamples": [
+        "11 of 16 verified runs in the local sweep made no tool call at all; the contract gate now reports such a run as inconclusive rather than accepted"
+      ]
+    },
+    "V3": {
+      "decision": "MISSING",
+      "implementation_status": "partial",
+      "blocked_on": "the policy requires a paired comparison against a strong single-agent baseline with the same budgets over at least 20 eligible tasks across 4 repositories, with no post-hoc subset selection",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/local-benchmark-results.md", "description": "the single-agent versus multi-agent comparison that was actually run, and what it does not establish"}
+      ],
+      "counterexamples": []
+    },
+    "V4": {
+      "decision": "MISSING",
+      "implementation_status": "absent",
+      "blocked_on": "the policy requires a second independent team on a separately administered machine; a second run by the implementation team is explicitly insufficient",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/limitations.md", "description": "the section that states which qualifications this repository cannot make"}
+      ],
+      "counterexamples": []
+    },
+    "S1": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "complete",
+      "blocked_on": "an independent reviewer must reproduce the containment probe and the adversarial worker-command tests on a separately administered host",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/sandbox/containment.py", "description": "the bubblewrap containment backend and the probe that observes the boundary rather than assuming it"},
+        {"location": "src/agent_squad/sandbox/limits.py", "description": "the environment builder no longer inherits the invoking user's HOME"},
+        {"location": "tests/integration/test_hardened_containment.py", "description": "the adversarial worker-command evidence: private home, host canary, denied network endpoint, system image, orphaned descendants, and refusal when containment is unavailable"}
+      ],
+      "counterexamples": [
+        "the hardened guard previously reported the private-home boundary as satisfied while the environment builder kept the invoking user's HOME; the check now inspects the real configuration and directory"
+      ]
+    },
+    "S2": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "an independent reviewer must attempt approval mutation, expiry, replay, replan and cross-run reuse, and the seeded-secret suite",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "src/agent_squad/security/approval.py", "description": "approvals bound to the action, the workspace and the request"},
+        {"location": "src/agent_squad/security/policy.py", "description": "the policy engine that decides what a command may do"}
+      ],
+      "counterexamples": []
+    },
+    "S3": {
+      "decision": "MISSING",
+      "implementation_status": "absent",
+      "blocked_on": "the policy requires an audit by a reviewer independent of the implementation, with zero unresolved critical or high findings; a self-audit does not qualify",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/security-threat-model.md", "description": "the threat model the audit would be measured against"}
+      ],
+      "counterexamples": []
+    },
+    "M1": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "partial",
+      "blocked_on": "the qualification timing sample must be rerun with verified process ownership and a recorded resource baseline; the historical sweep carried a caveat and is retained with it",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/local-benchmark-methodology.md", "description": "the timing conditions, including the residual-server caveat on the historical results"},
+        {"location": "benchmarks/results/suite-full-3trials.json", "description": "the raw records, retained rather than deleted"}
+      ],
+      "counterexamples": []
+    },
+    "M2": {
+      "decision": "INCONCLUSIVE",
+      "implementation_status": "in progress",
+      "blocked_on": "an independent reviewer must reproduce the installation, verdicts, schema checks, recovery and metric generation on a clean supported machine",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "pyproject.toml", "description": "the pinned project metadata and the tool configuration"},
+        {"location": "scripts/build_assessment.py", "description": "the assessor that enforces the policy's own rules over this record"}
+      ],
+      "counterexamples": []
+    },
+    "U1": {
+      "decision": "MISSING",
+      "implementation_status": "absent",
+      "blocked_on": "the policy requires 3 developers outside the implementation team, 30 consecutive days, 100 genuine runs across 3 repositories and 10 documented recovery exercises; none of this exists",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/limitations.md", "description": "the section that states which qualifications this repository cannot make"}
+      ],
+      "counterexamples": []
+    },
+    "U2": {
+      "decision": "MISSING",
+      "implementation_status": "absent",
+      "blocked_on": "the policy requires 90 consecutive days, 10 external users, 1000 genuine runs and 10 repositories; none of this exists",
+      "reviewer": null,
+      "reviewed_at": null,
+      "evidence": [
+        {"location": "docs/limitations.md", "description": "the section that states which qualifications this repository cannot make"}
+      ],
+      "counterexamples": []
+    }
+  }
+}
