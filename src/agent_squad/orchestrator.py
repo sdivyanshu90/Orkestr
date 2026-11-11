@@ -21,6 +21,7 @@ import json
 import os
 import signal
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -406,7 +407,9 @@ class Orchestrator:
         finally:
             restore_signals()
 
-    def _install_signal_handlers(self, cancellation: asyncio.Event):
+    def _install_signal_handlers(
+        self, cancellation: asyncio.Event
+    ) -> Callable[[], None]:
         """Turn SIGINT and SIGTERM into a graceful cancellation.
 
         A signal that kills the process outright cannot reclaim what the
@@ -488,7 +491,6 @@ class Orchestrator:
             ) from exc
         self.owner_id = owner_id
         self.fence = fence
-        self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_task = asyncio.create_task(self._heartbeat_ownership())
 
         # The isolation profile is checked *before* anything runs: a profile
@@ -764,7 +766,7 @@ class Orchestrator:
                 verdict = ContractVerdict(
                     outcome=VerificationOutcome.TIMED_OUT,
                     contract_hash=contract.contract_hash,
-                    base_revision=base_revision,
+                    base_revision=base_revision or "",
                     verifier_version="contract-gate/1",
                     detail=(
                         "the run exceeded its absolute deadline before the "

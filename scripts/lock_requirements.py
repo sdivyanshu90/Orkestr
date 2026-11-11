@@ -12,9 +12,11 @@ against the *distribution archive* it downloads, not against the unpacked
 files in ``site-packages``.  Hashing installed files would produce a file
 that cannot be installed with ``--require-hashes``.
 
-Supported targets default to the CI matrix (CPython 3.11, 3.12 and 3.13 on
-manylinux x86-64).  Hashes for every wheel any of those interpreters can
-use are included, so one lock serves the whole matrix.
+Targets default to the CI matrix (CPython 3.11, 3.12 and 3.13 on manylinux
+x86-64) plus the generator host's interpreter, so the lock is installable
+both in CI and in the `.venv` that produced it.  Hashes for every wheel any
+of those interpreters can use are included, so one lock serves the whole
+matrix.
 
 Reproduce::
 
@@ -43,7 +45,10 @@ from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-DEFAULT_PYTHON_VERSIONS = ("3.11", "3.12", "3.13")
+#: CI supports 3.11-3.13.  The generator host's interpreter is included too
+#: so the lock is also installable in the development environment that
+#: produced it; extra wheel hashes are ignored by the other interpreters.
+DEFAULT_PYTHON_VERSIONS = ("3.11", "3.12", "3.13", "3.14")
 DEFAULT_PLATFORMS = (
     "manylinux2014_x86_64",
     "manylinux_2_17_x86_64",
@@ -236,7 +241,7 @@ def build_lock(
         "#   - Versions were read from the distributions installed in .venv via",
         f"#     importlib.metadata (generator host: {host}).",
         "#   - sha256 hashes were computed over the real wheel archives fetched by",
-        "#     pip for each supported interpreter; no hash is hand-written.",
+        "#     pip for each interpreter target; no hash is hand-written.",
         f"#   - Interpreter targets: CPython {', '.join(python_versions)}.",
         f"#   - Platform tags: {', '.join(platforms)}.",
         "#   - The dependency closure is pyproject.toml's runtime dependencies plus",

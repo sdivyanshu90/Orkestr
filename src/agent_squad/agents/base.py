@@ -401,13 +401,19 @@ class AgentLoop:
                                 "awaiting", action=decision.action or call.name
                             )
                         )
+                    requested_command = call.arguments.get("command")
                     grant = await _maybe_await(
                         self.approver(
                             action=decision.action or call.name,
                             rationale=decision.reason,
-                            arguments=list(call.arguments.get("command") or [])
-                            if isinstance(call.arguments.get("command"), (list, tuple))
-                            else [],
+                            arguments=[
+                                str(a)
+                                for a in (
+                                    requested_command
+                                    if isinstance(requested_command, (list, tuple))
+                                    else []
+                                )
+                            ],
                             task_id=self.task_id,
                             sender=self.actor,
                             workspace=str(tool_context.workdir),
@@ -418,15 +424,14 @@ class AgentLoop:
                     # against the binding is what makes a stale approval
                     # useless: if the request changed, or the agent asks for
                     # a different command, the grant no longer matches.
+                    raw_command = call.arguments.get("command")
                     binding = ApprovalBinding(
                         action=decision.action or call.name,
                         arguments=tuple(
                             str(a)
                             for a in (
-                                call.arguments.get("command")
-                                if isinstance(
-                                    call.arguments.get("command"), (list, tuple)
-                                )
+                                raw_command
+                                if isinstance(raw_command, (list, tuple))
                                 else []
                             )
                         ),

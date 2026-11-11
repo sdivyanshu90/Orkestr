@@ -4,8 +4,8 @@
 #   - Versions were read from the distributions installed in .venv via
 #     importlib.metadata (generator host: CPython 3.14.4 on linux).
 #   - sha256 hashes were computed over the real wheel archives fetched by
-#     pip for each supported interpreter; no hash is hand-written.
-#   - Interpreter targets: CPython 3.11, 3.12, 3.13.
+#     pip for each interpreter target; no hash is hand-written.
+#   - Interpreter targets: CPython 3.11, 3.12, 3.13, 3.14.
 #   - Platform tags: manylinux2014_x86_64, manylinux_2_17_x86_64, manylinux_2_28_x86_64.
 #   - The dependency closure is pyproject.toml's runtime dependencies plus
 #     the [dev] extra.
@@ -29,6 +29,7 @@ certifi==2026.10.23 \
     --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
 charset-normalizer==3.5.2 \
     --hash=sha256:211d5a3eb6af8f513b8d4ca19a8c1b7accab1b5f0d3175f9826b03c1a920dc1f \
+    --hash=sha256:34276fd796040bf0993ab33a369aa572e6979c7aab225a88893667ad8eac8f7a \
     --hash=sha256:3d31298449090ab8d47b7b1b2a555ff73cac7ed438a08b7ac160980c7ebed649 \
     --hash=sha256:7218e8f32b0956cfcd048fd42d9d5779809745ca1d86113ca56f66e7ae1549c4
 googleapis-common-protos==1.76.0 \
@@ -46,7 +47,8 @@ iniconfig==2.3.1 \
 librt==0.16.0 \
     --hash=sha256:17bac7f7a16b328fff77e440287693eb017abde913595b5827ebccbc21ecd8a6 \
     --hash=sha256:36e53948e99bbe3ffea257124cfcae1cfb01831555c9a9c903c9f9a72db7fd07 \
-    --hash=sha256:94aed6a8308818b91677957d1bd03188869cd7aeb23c5dba7912a6c0402f7602
+    --hash=sha256:94aed6a8308818b91677957d1bd03188869cd7aeb23c5dba7912a6c0402f7602 \
+    --hash=sha256:ca8052401c55d7511dda6760719fda7618067e83535d7d0010096d216c34b667
 markdown-it-py==4.2.0 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
 mdurl==0.1.2 \
@@ -54,7 +56,8 @@ mdurl==0.1.2 \
 mypy==2.4.1 \
     --hash=sha256:1fb70621535c22fd4b1a0450d37ed1d6c5eb39656a1cebfb189084c12de54ba7 \
     --hash=sha256:a20ff6cd2af7a670c64f089bfa5fbcebe8ff3bf896c5e6ac7c9862c7960e4494 \
-    --hash=sha256:b69a15fc2e75858d6b15e91ed3a0dcff1a533265183b64734138791fe0f49aa5
+    --hash=sha256:b69a15fc2e75858d6b15e91ed3a0dcff1a533265183b64734138791fe0f49aa5 \
+    --hash=sha256:beb254fec368c4e7f7f82a5f310c6470b893ec88a90b66426da971c6826b0453
 mypy-extensions==1.2.0 \
     --hash=sha256:993e7a20aa5671eb41a7132cf555af30062da99729601601b9a8382b11cae768
 opentelemetry-api==1.45.2 \
@@ -86,6 +89,7 @@ pydantic==2.14.3 \
 pydantic-core==2.50.4 \
     --hash=sha256:0574866e05f6adeecc520d87e87dd06210c0a51706341f6ef8421572f5a64444 \
     --hash=sha256:c81d98e27d9d9261909dcccab1ba5d6ea1c98b0bb9470e368604614fd1d36ddd \
+    --hash=sha256:f1d62fb172db35c6478c9323da34ff37d1f3d37d7d44337a9d94ba8c583e5730 \
     --hash=sha256:fb2bb5b557080da398b866408117d98fe9731a12334afd0cdff221b458cdc5dc
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9

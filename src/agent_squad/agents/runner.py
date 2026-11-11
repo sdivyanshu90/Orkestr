@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -619,7 +620,7 @@ class WorkerRunner:
         role_config = self.config.roles.get(role.value)
         return role_config.max_turn_tokens if role_config else 60_000
 
-    def _model_call_hook(self, task: TaskSpec, attempt: int):
+    def _model_call_hook(self, task: TaskSpec, attempt: int) -> Callable[..., Awaitable[None]]:
         async def hook(**kwargs: Any) -> None:
             self.log.append(
                 EventType.MODEL_CALL,
@@ -640,7 +641,7 @@ class WorkerRunner:
 
         return hook
 
-    def _tool_hook(self, task: TaskSpec, attempt: int):
+    def _tool_hook(self, task: TaskSpec, attempt: int) -> Callable[..., Awaitable[None]]:
         async def hook(**kwargs: Any) -> None:
             self.log.append(
                 EventType.TOOL_INVOKED,
@@ -657,7 +658,7 @@ class WorkerRunner:
 
         return hook
 
-    def _usage_hook(self, task: TaskSpec):
+    def _usage_hook(self, task: TaskSpec) -> Callable[..., Awaitable[None]]:
         async def hook(**kwargs: Any) -> None:
             tokens = int(kwargs.get("tokens") or 0)
             cost = float(kwargs.get("cost_usd") or 0.0)
@@ -675,7 +676,7 @@ class WorkerRunner:
 
         return hook
 
-    def _approval_hook(self, task: TaskSpec, attempt: int):
+    def _approval_hook(self, task: TaskSpec, attempt: int) -> Callable[..., Awaitable[None]]:
         """Move the task into and out of ``AWAITING_APPROVAL``.
 
         The state is not cosmetic: it is how an operator sees that a run is
@@ -717,7 +718,7 @@ class WorkerRunner:
 
         return hook
 
-    def _policy_hook(self, task: TaskSpec, attempt: int):
+    def _policy_hook(self, task: TaskSpec, attempt: int) -> Callable[..., Awaitable[None]]:
         async def hook(**kwargs: Any) -> None:
             decision = str(kwargs.get("decision") or "")
             if decision == "allow":

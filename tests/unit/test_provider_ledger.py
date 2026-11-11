@@ -373,6 +373,25 @@ async def test_a_fallback_attempt_is_its_own_record_with_fallback_phase() -> Non
     assert ledger.counts()["phases"]["fallback"] == 1
 
 
+async def test_the_router_adopts_a_ledger_already_attached_to_a_provider() -> None:
+    """The composition root's ledger must remain the one the router reports."""
+    shared = RequestLedger()
+    primary = MockProvider(ledger=shared)
+    router = ProviderRouter(
+        [primary, MockProvider()],
+        [
+            ProviderConfig(name="mock", model="primary"),
+            ProviderConfig(name="mock", model="fallback"),
+        ],
+    )
+
+    assert router.ledger is shared
+    await router.complete(make_request(phase="worker"))
+
+    assert len(shared) == 1
+    assert router.ledger.records == shared.records
+
+
 # ---------------------------------------------------------------- reconciliation
 
 

@@ -24,7 +24,10 @@ intervals are the evidence.
 | Containment | `bubblewrap` (hardened profile), none (development profile) | `unshare --net` alone is *not* sufficient for the hardened profile: it cannot isolate the filesystem, so a host that offers only `unshare` is refused. |
 | Authority | Single user, single host, local filesystem | There is no multi-user model and no distributed execution. |
 
-Anything outside this table is not claimed. In particular, a 9.5+ score
+Anything outside this table is not claimed. The lock additionally carries
+wheel hashes for the generator host's CPython 3.14 so the development
+`.venv` can install the same file; 3.14 is not a supported release
+combination and is not in CI. In particular, a 9.5+ score
 also requires `S3` (an implementation-independent audit), `U1`/`U2`
 (30–90 days of external usage) and `V4` (a second independent team), none
 of which is a reproduction step.

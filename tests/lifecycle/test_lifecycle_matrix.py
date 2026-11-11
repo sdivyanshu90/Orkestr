@@ -419,7 +419,14 @@ async def main():
         }}],
     }}
     print("READY", flush=True)
-    await orchestrator.run("exercise the lifecycle", request_spec=spec)
+    # A real caller tears the run down even when it is cancelled; the
+    # harness must do the same, otherwise the test would be asserting that
+    # a *deliberately abandoned* run leaks -- which proves nothing about
+    # the runtime.
+    try:
+        await orchestrator.run("exercise the lifecycle", request_spec=spec)
+    finally:
+        await orchestrator.aclose()
 
 asyncio.run(main())
 """

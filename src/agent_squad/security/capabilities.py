@@ -12,7 +12,7 @@ meaningfully improving security.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 from ..models.task import Role
@@ -82,7 +82,7 @@ class CapabilitySet:
     def __contains__(self, capability: object) -> bool:
         return isinstance(capability, str) and capability in self.granted
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(sorted(self.granted))
 
     def __len__(self) -> int:

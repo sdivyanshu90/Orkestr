@@ -381,7 +381,9 @@ class IntegrationEngine:
         timeout_s = self.config.verification.command_timeout_s
         deadline = self.deadline or current_run_scope().deadline
         if deadline is not None:
-            timeout_s = deadline.clamp(timeout_s)
+            clamped = deadline.clamp(timeout_s)
+            if clamped is not None:
+                timeout_s = clamped
         try:
             result = await sandbox.run(
                 command,

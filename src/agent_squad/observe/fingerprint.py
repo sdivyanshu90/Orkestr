@@ -65,9 +65,9 @@ def _dependency_hash() -> str:
         from importlib.metadata import distributions
 
         names = sorted(
-            f"{d.metadata['Name']}=={d.version}"
-            for d in distributions()
-            if d.metadata.get("Name")
+            f"{dist.name}=={dist.version}"
+            for dist in distributions()
+            if dist.name
         )
     except Exception:  # pragma: no cover - defensive
         return "unknown"

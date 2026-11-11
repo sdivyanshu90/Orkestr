@@ -183,7 +183,7 @@ class TaskGraph:
                     nxt = deps[idx]
                     if colour[nxt] == GREY:
                         cycle = [nxt]
-                        cur = node
+                        cur: str | None = node
                         while cur is not None and cur != nxt:
                             cycle.append(cur)
                             cur = parent[cur]

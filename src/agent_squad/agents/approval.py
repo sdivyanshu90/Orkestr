@@ -157,7 +157,7 @@ class ApprovalBroker:
 
     def _grant_from(
         self,
-        record: dict,
+        record: dict[str, Any],
         binding: ApprovalBinding,
         ttl_s: float | None,
     ) -> ApprovalGrant:
@@ -176,7 +176,9 @@ class ApprovalBroker:
             expires_at=expires_at,
         )
 
-    async def _publish_decision(self, record: dict, task_id: str | None) -> None:
+    async def _publish_decision(
+        self, record: dict[str, Any], task_id: str | None
+    ) -> None:
         """Publish the human's decision as a typed message.
 
         The decision is already durable in the ``approvals`` table; the

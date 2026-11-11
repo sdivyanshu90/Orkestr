@@ -218,6 +218,7 @@ class RepositoryInspector:
                     "the inspection phase was cancelled", phase=Phase.INSPECTION.value
                 )
         if thread.is_alive():
+            assert deadline is not None
             deadline.observe(Phase.INSPECTION.value)
             raise DeadlineExceeded(
                 "the repository inspection did not finish within the run's "

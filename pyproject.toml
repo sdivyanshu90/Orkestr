@@ -75,6 +75,19 @@ files = [
     "src/agent_squad/scheduler",
     "src/agent_squad/runtime",
     "src/agent_squad/models",
+    # "Orchestration paths" in the criterion is not just the scheduler: the
+    # composition root, the agent loop and the planner are where a verdict
+    # is produced.  Leaving them out would make the zero-error claim true
+    # of a narrower set than the criterion names.
+    "src/agent_squad/orchestrator.py",
+    "src/agent_squad/agents",
+    "src/agent_squad/planning",
+    "src/agent_squad/security",
+    "src/agent_squad/tools",
+    "src/agent_squad/dag",
+    "src/agent_squad/integration",
+    "src/agent_squad/replay",
+    "src/agent_squad/observe",
 ]
 # The package lives under ``src/``; without this the modules would resolve
 # as top-level names and every intra-package import would fail.

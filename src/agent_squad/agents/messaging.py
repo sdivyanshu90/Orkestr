@@ -208,10 +208,12 @@ class MessageBus:
 
     # ------------------------------------------------------------- queries
 
-    def history(self, run_id: str, task_id: str | None = None) -> list[dict]:
+    def history(
+        self, run_id: str, task_id: str | None = None
+    ) -> list[dict[str, Any]]:
         return self.state.list_messages(run_id, task_id)
 
-    def state_effecting_only(self, run_id: str) -> list[dict]:
+    def state_effecting_only(self, run_id: str) -> list[dict[str, Any]]:
         return [
             m
             for m in self.state.list_messages(run_id)
@@ -230,15 +232,15 @@ class TaskInbox:
     """
 
     task_id: str
-    assignment: dict | None = None
-    progress: list[dict] = field(default_factory=list)
-    handoff: dict | None = None
-    failures: list[dict] = field(default_factory=list)
-    escalations: list[dict] = field(default_factory=list)
-    revisions: list[dict] = field(default_factory=list)
-    verification_requests: list[dict] = field(default_factory=list)
-    cancellations: list[dict] = field(default_factory=list)
-    approval_decisions: list[dict] = field(default_factory=list)
+    assignment: dict[str, Any] | None = None
+    progress: list[dict[str, Any]] = field(default_factory=list)
+    handoff: dict[str, Any] | None = None
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    escalations: list[dict[str, Any]] = field(default_factory=list)
+    revisions: list[dict[str, Any]] = field(default_factory=list)
+    verification_requests: list[dict[str, Any]] = field(default_factory=list)
+    cancellations: list[dict[str, Any]] = field(default_factory=list)
+    approval_decisions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -275,7 +277,7 @@ class SupervisorChannel:
     bus: MessageBus
     supervisor: str = "supervisor"
     inboxes: dict[str, TaskInbox] = field(default_factory=dict)
-    escalations: list[dict] = field(default_factory=list)
+    escalations: list[dict[str, Any]] = field(default_factory=list)
 
     def inbox(self, task_id: str) -> TaskInbox:
         box = self.inboxes.get(task_id)

@@ -108,6 +108,22 @@ def _attach_ledger(provider: object, ledger: RequestLedger, seen: set[int] | Non
         _attach_ledger(inner, ledger, seen)
 
 
+def _existing_ledger(provider: object, seen: set[int] | None = None) -> RequestLedger | None:
+    """Find the ledger already attached to a provider or its wrapper."""
+    if seen is None:
+        seen = set()
+    if id(provider) in seen:
+        return None
+    seen.add(id(provider))
+    ledger = getattr(provider, "ledger", None)
+    if isinstance(ledger, RequestLedger):
+        return ledger
+    inner = getattr(provider, "inner", None)
+    if inner is not None and inner is not provider:
+        return _existing_ledger(inner, seen)
+    return None
+
+
 class ProviderRouter:
     """Routes model calls to the primary provider with fallbacks.
 
@@ -142,6 +158,15 @@ class ProviderRouter:
         self._semaphores = [
             asyncio.Semaphore(max(1, config.max_concurrency)) for config in configs
         ]
+        if ledger is None:
+            # The composition root may already have built every provider with
+            # one shared ledger.  Adopting it keeps ``router.ledger`` the same
+            # object the request path writes to instead of creating a second,
+            # empty ledger that would silently fail to reconcile.
+            for provider in providers:
+                ledger = _existing_ledger(provider)
+                if ledger is not None:
+                    break
         self.ledger = ledger if ledger is not None else RequestLedger()
         for provider in providers:
             _attach_ledger(provider, self.ledger)
