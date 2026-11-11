@@ -39,6 +39,17 @@ class Exchange:
     request: dict[str, Any]
     response: dict[str, Any]
     artifact_id: str | None = None
+    request_key: str = ""
+    """The identity of the request, independent of arrival order.
+
+    A recorded transcript that is matched purely by arrival order is only
+    replayable when one worker runs at a time.  With two workers the order
+    in which requests reach the provider is not deterministic, so the same
+    recording would hand task B the answer the model produced for task A.
+    The key is ``<task_id>:<ordinal within that task>``: a task's calls
+    are sequential, so the ordinal is deterministic even when tasks run
+    concurrently.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +59,7 @@ class Exchange:
             "request": self.request,
             "response": self.response,
             "artifact_id": self.artifact_id,
+            "request_key": self.request_key,
         }
 
 
@@ -81,6 +93,21 @@ def _decode_messages(payload: list[dict[str, Any]]) -> list[ChatMessage]:
     ]
 
 
+def request_key(request: ModelRequest, counters: dict[str, int]) -> str:
+    """The identity of one request within a recording.
+
+    ``task_id`` separates concurrent tasks; the per-task ordinal separates
+    the successive calls a single task makes (propose, observe a tool
+    result, answer).  Neither depends on which worker happened to reach
+    the provider first, which is what makes a concurrent recording
+    replayable.
+    """
+    task_id = str(request.metadata.get("task_id") or "")
+    ordinal = counters.get(task_id, 0)
+    counters[task_id] = ordinal + 1
+    return f"{task_id}:{ordinal}"
+
+
 @dataclass
 class RecordingProvider:
     """Wraps a provider and records every exchange."""
@@ -90,6 +117,7 @@ class RecordingProvider:
     run_id: str
     exchanges: list[Exchange] = field(default_factory=list)
     record_artifacts: bool = True
+    _counters: dict[str, int] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
@@ -105,12 +133,14 @@ class RecordingProvider:
         return self.inner.model
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
+        key = request_key(request, self._counters)
         response = await self.inner.complete(request)
         index = len(self.exchanges)
         exchange = Exchange(
             index=index,
             run_id=self.run_id,
             task_id=str(request.metadata.get("task_id") or "") or None,
+            request_key=key,
             request={
                 "messages": _encode_messages(request.messages),
                 "tools": [t.model_dump(mode="json") for t in request.tools],
@@ -156,10 +186,15 @@ class RecordingProvider:
 class RecordedProvider:
     """A provider that serves previously recorded responses.
 
-    It makes **no** network calls.  Each request is matched against the next
-    recorded exchange; if the recorded exchange does not fit, the provider
-    refuses rather than improvising, because an improvised answer would turn
-    a replay into an evaluation.
+    It makes **no** network calls.  A request is matched to its recorded
+    exchange by **request identity** (task and per-task ordinal), not by
+    arrival order, because a replay of a concurrent run does not deliver
+    requests in the recorded order.  When the recording predates request
+    keys, the provider falls back to serving the next unserved exchange in
+    order and records that it did so.
+
+    If no exchange fits, the provider refuses rather than improvising: an
+    improvised answer would turn a replay into an evaluation.
     """
 
     name = "recorded"
@@ -167,23 +202,42 @@ class RecordedProvider:
     def __init__(self, exchanges: list[Exchange], model: str = "recorded") -> None:
         self._exchanges = list(exchanges)
         self._cursor = 0
+        self._counters: dict[str, int] = {}
+        self._by_key: dict[str, Exchange] = {
+            e.request_key: e for e in self._exchanges if e.request_key
+        }
+        self._served: set[int] = set()
+        self.ordered_fallbacks = 0
         self.model = model
 
     @property
     def calls_served(self) -> int:
-        return self._cursor
+        return len(self._served)
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         from ..errors import ModelError
 
-        if self._cursor >= len(self._exchanges):
+        key = request_key(request, self._counters)
+        exchange = self._by_key.get(key)
+        if exchange is None or exchange.index in self._served:
+            # A recording that predates request keys: serve the next
+            # unserved exchange in order, and record that the match was
+            # positional rather than logical.
+            exchange = next(
+                (e for e in self._exchanges if e.index not in self._served),
+                None,
+            )
+            if exchange is not None:
+                self.ordered_fallbacks += 1
+        if exchange is None or exchange.index in self._served:
             raise ModelError(
                 "the recorded transcript is exhausted; replay cannot continue",
                 recorded=len(self._exchanges),
-                served=self._cursor,
+                served=len(self._served),
+                request_key=key,
             )
-        exchange = self._exchanges[self._cursor]
-        self._cursor += 1
+        self._served.add(exchange.index)
+        self._cursor = len(self._served)
         payload = exchange.response
         usage = Usage.model_validate(payload.get("usage") or {})
         return ModelResponse(
@@ -227,6 +281,7 @@ def load_exchanges(store: ArtifactStore, run_id: str) -> list[Exchange]:
                 request=data.get("request", {}),
                 response=data.get("response", {}),
                 artifact_id=artifact.id,
+                request_key=str(data.get("request_key") or ""),
             )
         )
     exchanges.sort(key=lambda e: e.index)

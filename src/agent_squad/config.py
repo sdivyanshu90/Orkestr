@@ -121,12 +121,30 @@ class SandboxConfig(_Base):
             "trust domain as the workspace."
         ),
     )
+    registry_path: str = Field(
+        default="",
+        description=(
+            "The run's durable resource registry.  While a sandboxed command "
+            "is alive its process group is recorded there, so that a run "
+            "killed with SIGKILL leaves a record the next run can reclaim. "
+            "Empty disables the registration."
+        ),
+    )
 
 
 class WorkspaceConfig(_Base):
     worktree_root: str | None = None
     keep_worktrees_on_success: bool = False
-    keep_worktrees_on_failure: bool = True
+    keep_worktrees_on_failure: bool = Field(
+        default=False,
+        description=(
+            "Whether a failed task's worktree is retained for inspection.  "
+            "Retention is off by default: a workspace left behind silently "
+            "is indistinguishable from a leak.  When it is switched on, the "
+            "retained workspace is recorded in the run's durable "
+            "retained-workspaces manifest."
+        ),
+    )
     integration_root: str | None = None
 
 

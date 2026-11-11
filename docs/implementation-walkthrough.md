@@ -8,6 +8,45 @@ time of writing.
 
 ## 0. The shape of the thing
 
+```mermaid
+flowchart TB
+    REQ["Request + acceptance criteria"]
+    CON["RequestContract<br/>immutable, content-hashed"]
+    PLAN["Planner<br/>rule-based or model-backed"]
+    GRAPH["TaskGraph<br/>DAG with dependencies"]
+    STRAT["Strategy selector<br/>single · parallel · sequential"]
+    SCHED["Scheduler<br/>async, dependency-aware"]
+    WT["Per-task worktree<br/>git worktree at the base revision"]
+    RUN["Worker<br/>tools under a capability set"]
+    PATCH["Patch artifact<br/>content-addressed"]
+    INT["Integration engine<br/>ordered, conflict-aware"]
+    CAND["Combined candidate tree"]
+    GATE["Contract gate<br/>independent re-execution"]
+    VERDICT["Verdict<br/>accepted · rejected · inconclusive"]
+
+    REQ --> CON
+    CON --> PLAN
+    PLAN --> GRAPH
+    GRAPH --> STRAT --> SCHED
+    SCHED --> WT --> RUN --> PATCH
+    PATCH --> INT --> CAND
+    CAND --> GATE
+    CON -.->|the required outcomes| GATE
+    GATE --> VERDICT
+
+    classDef trust fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
+    classDef untrust fill:#3b1f1f,stroke:#e06c6c,color:#f5f5f5
+    class REQ,CON trust
+    class WT,RUN,PATCH,INT untrust
+```
+
+The single most important line in that diagram is the dashed one: the
+**required outcomes** come from the owner's contract, not from the
+plan and not from the worker. Everything else in the system can be
+produced by a model; the contract cannot. That is what makes the verdict
+at the end an independent judgement rather than the model's opinion of
+its own work.
+
 ```
 agent-squad run "..." --repo . --spec request.json
         │

@@ -17,7 +17,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as _dt
+import json
 import os
+import signal
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -53,7 +56,8 @@ from .planning.replan import (
 from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
 from .providers.registry import ProviderRouter, build_providers
-from .runtime.deadline import RunDeadline
+from .runtime.deadline import DeadlineExceeded, RunDeadline
+from .runtime.registry import ResourceRegistry, reconcile
 from .scheduler.engine import Scheduler, TaskOutcome
 from .security.policy import PolicyEngine
 from .security.profiles import IsolationGuard, get_profile
@@ -183,6 +187,7 @@ class Orchestrator:
                 "private_home": private_home,
                 "containment": containment,
                 "extra_bind_paths": tuple(p for p in binds if p),
+                "registry_path": str(self.paths.root / "resources.json"),
             }
         )
         return config.model_copy(update={"sandbox": sandbox})
@@ -225,6 +230,24 @@ class Orchestrator:
         self.db = Database(self.paths.database)
         self.log = EventLog(self.db)
         self.state = StateStore(self.db, self.log)
+        # The run's durable resource registry.  While a sandboxed command
+        # is alive its process group is recorded here, so that a run
+        # killed with SIGKILL leaves a record that the next run reclaims.
+        self.registry = ResourceRegistry(self.paths.root / "resources.json")
+        # A previous owner may have been killed and left processes behind.
+        # Reclaiming them now, before this run starts any work, is what
+        # makes the next run safe to start.
+        self.reconciliation = reconcile(self.registry, grace_s=self.config.teardown_reserve_s)
+        if self.reconciliation.survivors or self.reconciliation.processes_terminated:
+            self.log.append(
+                EventType.RUN_RECONCILED,
+                run_id=self.config.run_id,
+                payload={
+                    "processes_terminated": self.reconciliation.processes_terminated,
+                    "force_killed": self.reconciliation.processes_force_killed,
+                    "survivors": list(self.reconciliation.survivors),
+                },
+            )
         self.artifacts = ArtifactStore(self.paths.artifacts)
         self.worktrees = WorktreeManager(config.repo_path, self.paths.worktrees)
         self.policy = PolicyEngine(
@@ -345,22 +368,73 @@ class Orchestrator:
         """Execute a complete orchestration session."""
         started_at = _dt.datetime.now(_dt.UTC)
         warnings: list[str] = []
-        with self.tracer.span(
-            "run",
-            run_id=self.config.run_id,
-            objective=objective[:200],
-            strategy_override=self.config.strategy_override,
-        ):
-            return await self._execute(
-                objective,
-                description=description,
-                request_spec=request_spec,
-                integrate=integrate,
-                cancellation=cancellation,
-                started_at=started_at,
-                warnings=warnings,
-                plan_override=plan_override,
+        # SIGINT and SIGTERM become a graceful cancellation, so that a
+        # signalled run still reclaims the children and workspaces it owns.
+        token = cancellation or asyncio.Event()
+        restore_signals = self._install_signal_handlers(token)
+        try:
+            with self.tracer.span(
+                "run",
+                run_id=self.config.run_id,
+                objective=objective[:200],
+                strategy_override=self.config.strategy_override,
+            ):
+                return await self._execute(
+                    objective,
+                    description=description,
+                    request_spec=request_spec,
+                    integrate=integrate,
+                    cancellation=token,
+                    started_at=started_at,
+                    warnings=warnings,
+                    plan_override=plan_override,
+                )
+        finally:
+            restore_signals()
+
+    def _install_signal_handlers(self, cancellation: asyncio.Event):
+        """Turn SIGINT and SIGTERM into a graceful cancellation.
+
+        A signal that kills the process outright cannot reclaim what the
+        run owns: the sandboxed children, the worktrees and the private
+        home are all left behind.  Intercepting the signal and setting the
+        cancellation token lets the normal teardown run instead.
+
+        A **second** signal restores the default disposition and re-raises
+        it, so an operator can still stop a run that is stuck in a way the
+        cooperative path cannot resolve.  That is the escape hatch, and it
+        is deliberate: a handler that swallows every signal would make a
+        wedged run unkillable except with SIGKILL.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return lambda: None
+        previous: dict[int, Any] = {}
+
+        def handler(signum: int, frame: Any) -> None:
+            if cancellation.is_set():
+                with contextlib.suppress(ValueError, OSError):
+                    signal.signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
+                return
+            cancellation.set()
+            self.logger.warning(
+                "run interrupted by signal; cancelling gracefully",
+                signal=signal.Signals(signum).name,
             )
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                previous[sig] = signal.getsignal(sig)
+                signal.signal(sig, handler)
+            except (ValueError, OSError):  # pragma: no cover - not the main thread
+                continue
+
+        def restore() -> None:
+            for sig, old in previous.items():
+                with contextlib.suppress(ValueError, OSError):
+                    signal.signal(sig, old)
+
+        return restore
 
     async def _execute(
         self,
@@ -632,18 +706,54 @@ class Orchestrator:
         integration: IntegrationResult | None = None
         bundle: str | None = None
         verdict = None
+        deadline_exceeded: DeadlineExceeded | None = None
         if integrate:
-            with self.tracer.span("integration", run_id=self.config.run_id):
-                integration, bundle = await self._integrate(
-                    graph,
-                    summary,
-                    keep_workspace=bool(contract.required_outcomes),
+            try:
+                with self.tracer.span("integration", run_id=self.config.run_id):
+                    integration, bundle = await self._integrate(
+                        graph,
+                        summary,
+                        keep_workspace=bool(contract.required_outcomes),
+                    )
+            except DeadlineExceeded as exc:
+                # A run that ran out of time is an outcome, not a crash.
+                # The integration phase is refused before it starts when
+                # the budget is exhausted, and nothing it would have
+                # created exists.
+                deadline_exceeded = exc
+                self.log.append(
+                    EventType.RUN_CANCELLED,
+                    run_id=self.config.run_id,
+                    payload={
+                        "reason": "deadline exceeded",
+                        "phase": getattr(exc, "phase", "integration"),
+                        "deadline": self.deadline.summary()
+                        if getattr(self, "deadline", None)
+                        else {},
+                    },
                 )
-            verdict = await self._judge_contract(contract, integration)
-            if integration is not None and integration.workspace and verdict is not None:
-                # The candidate has been judged; the staging worktree is no
-                # longer needed.
-                self.worktrees.remove_path(integration.workspace)
+            if deadline_exceeded is None:
+                verdict = await self._judge_contract(contract, integration)
+                if (
+                    integration is not None
+                    and integration.workspace
+                    and verdict is not None
+                ):
+                    # The candidate has been judged; the staging worktree is
+                    # no longer needed.
+                    self.worktrees.remove_path(integration.workspace)
+            else:
+                verdict = ContractVerdict(
+                    outcome=VerificationOutcome.TIMED_OUT,
+                    contract_hash=contract.contract_hash,
+                    base_revision=base_revision,
+                    verifier_version="contract-gate/1",
+                    detail=(
+                        "the run exceeded its absolute deadline before the "
+                        "candidate could be integrated and judged: "
+                        + str(getattr(deadline_exceeded, "phase", "integration"))
+                    ),
+                )
 
         finished_at = _dt.datetime.now(_dt.UTC)
         # The repository may have moved on since the artifacts were produced
@@ -1075,7 +1185,56 @@ class Orchestrator:
         for provider in self._providers:
             await provider.aclose()
         self.db.close()
+        self._reclaim_resources()
+        self._reclaim_workspaces()
         self._remove_private_home()
+
+    def _reclaim_workspaces(self) -> None:
+        """Remove every workspace the run did not explicitly retain.
+
+        The scheduler disposes of a worktree after a *completed* attempt,
+        but an attempt that timed out or raised never produces a result to
+        dispose of, so its worktree would otherwise survive the run.  The
+        run's workspace root is swept here as the last line of defence:
+        a directory survives only when the owner opted into retention and
+        the durable manifest records it.
+        """
+        root = getattr(self, "paths", None)
+        if root is None or not root.worktrees.exists():
+            return
+        retained: set[str] = set()
+        manifest_path = self.paths.root / "retained-workspaces.json"
+        if manifest_path.exists():
+            try:
+                for entry in json.loads(manifest_path.read_text(encoding="utf-8")):
+                    retained.add(str(entry.get("path")))
+            except (OSError, json.JSONDecodeError, AttributeError):
+                retained = set()
+        for child in sorted(self.paths.worktrees.iterdir()):
+            if not child.is_dir():
+                continue
+            if str(child) in retained:
+                continue
+            self.worktrees.remove_path(child)
+
+    def _reclaim_resources(self) -> None:
+        """Reclaim everything this run still owns.
+
+        A run that ends normally has usually finished its commands, but a
+        run that was cancelled, failed or interrupted may not have, and a
+        survivor is worse than a slow teardown.  The grace period is the
+        policy's five seconds: terminate, wait, escalate to ``SIGKILL``,
+        and report whatever is still alive rather than pretending.
+        """
+        registry = getattr(self, "registry", None)
+        if registry is None:
+            return
+        report = registry.cleanup(grace_s=5.0)
+        if report.survivors:
+            self.logger.error(
+                "resources survived the run's teardown",
+                survivors=list(report.survivors),
+            )
 
     def _remove_private_home(self) -> None:
         """Delete the run's private home.

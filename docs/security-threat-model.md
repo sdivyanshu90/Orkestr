@@ -106,14 +106,89 @@ and the code says so in its own docstrings.
 
 ## 4. Trust boundaries
 
+```mermaid
+flowchart TB
+    subgraph host["Host (trusted operator's machine)"]
+        subgraph operator["Operator plane"]
+            CLI["CLI"]
+            API["HTTP API"]
+            DASH["Dashboard"]
+        end
+
+        subgraph control["Control plane (trusted)"]
+            ORCH["Orchestrator"]
+            PLAN["Planner"]
+            GATE["Contract gate<br/>independent re-execution"]
+            REG["Resource registry<br/>owned PIDs and artifacts"]
+        end
+
+        subgraph store["Durable state"]
+            DB[("SQLite WAL<br/>event log + task state")]
+            ART["Artifact store<br/>content-addressed"]
+        end
+
+        subgraph provider["Provider plane (semi-trusted)"]
+            LLM["Model endpoint"]
+        end
+
+        subgraph worker["Worker plane (UNTRUSTED)"]
+            WRK["Worker agent"]
+            CMD["Sandboxed command"]
+            REPO["Repository content<br/>code, config, hooks"]
+        end
+
+        subgraph boundary["Containment boundary (hardened profile)"]
+            B3["B3: read-only system<br/>private HOME<br/>empty netns<br/>own PID ns"]
+        end
+
+        subgraph evaluator["Evaluator plane (NOT reachable by the worker)"]
+            MAT["Protected verification material"]
+            ORC["Independent oracle"]
+        end
+    end
+
+    CLI --> ORCH
+    API --> ORCH
+    DASH <--> DB
+    ORCH --> PLAN --> LLM
+    PLAN --> DB
+    ORCH --> WRK
+    WRK -->|B1 tool call| CMD
+    REPO -.->|B2 untrusted text| WRK
+    CMD --- B3
+    B3 --- REPO
+    ORCH --> GATE
+    GATE --> MAT
+    GATE --> ORC
+    GATE --> DB
+    ORCH --> REG
+    ORCH --> ART
+    ORCH -.->|B11 full conversation| LLM
+
+    classDef untrusted fill:#3b1f1f,stroke:#e06c6c,color:#f5f5f5
+    classDef trusted fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
+    classDef protected fill:#2b2340,stroke:#a37ce0,color:#f5f5f5
+    class WRK,CMD,REPO untrusted
+    class ORCH,PLAN,GATE,REG,DB,ART trusted
+    class MAT,ORC protected
+```
+
+The diagram encodes one decision that is easy to get wrong: **the
+evaluator is not in the worker plane.** The oracle that decides whether a
+request was satisfied does not share a filesystem, a process tree or a
+network namespace with the code it judges. If it did, a worker that could
+write to the oracle's inputs would be writing its own exam.
+
+### Boundary register
+
 | # | Boundary | Location | What crosses it | Trust assumption | Mechanism | Enforcement status |
 | --- | --- | --- | --- | --- | --- | --- |
 | B1 | Model → tool invocation | `agents/base.py:AgentLoop._invoke_tool` | Tool name and arguments | Untrusted | Registry membership check; `PolicyEngine.authorize` (capability → scope → approval); `tools/base.py:ToolContext.resolve` path containment | **Partial.** Only registered tools can be called, and `authorize` now runs before every invocation — but the capability sets it checks are, today, a subset of what the registry already enforces. |
 | B2 | Repository content → agent context | `agents/base.py:AgentLoop._render_tool_result` → `security/injection.py:wrap_untrusted` | File contents, command output | Untrusted | Delimiter labelling plus `UNTRUSTED_PREAMBLE`; `security/injection.py:scan_for_injection` used only by `planning/inspector.py:RepositoryInspector._scan` | **Signal only.** Labelling is not sanitisation; tool output is not scanned at all. |
-| B3 | Orchestrator → sandboxed process | `sandbox/limits.py:Sandbox.run` | argv, cwd, a stripped environment | Partially trusted (may be hostile repo code) | Executable allow-list (`Sandbox.check_executable`), `RLIMIT_CPU/AS/FSIZE/CORE`, env stripping (`build_environment`), wall-clock timeout, optional `unshare --net` | **Active but weak.** `sh`, `bash` and `python3` are allow-listed, so arbitrary code runs with the user's privileges. |
-| B4 | Agent → git | `tools/exec.py:_git` (sandboxed) and `workspace/worktree.py:git` (not sandboxed, full env) | Commit, diff, status, worktree administration | Trusted tooling | Capability `EXEC_GIT`; `git` is on the allow-list | **Not a boundary.** `git` runs repository-controlled configuration and hooks. |
+| B3 | Orchestrator → sandboxed process | `sandbox/limits.py:Sandbox.run` | argv, cwd, a stripped environment | Partially trusted (may be hostile repo code) | Executable allow-list (`Sandbox.check_executable`), `RLIMIT_CPU/AS/FSIZE/CORE`, env stripping (`build_environment`), wall-clock timeout, and — under the hardened profile — a bubblewrap boundary (`sandbox/containment.py`) | **Two tiers, and the tier is stated.** The *development* profile is best-effort: `sh`, `bash` and `python3` are allow-listed, so arbitrary code runs with the user's privileges and this row is a limitation, not a defence. The *hardened* profile runs the command inside a bubblewrap user namespace with a read-only system image, a private home, an empty network namespace and a fresh PID namespace; the boundary is demonstrated by a probe that executes inside it, and a host that cannot provide it is refused before any work starts. |
+| B4 | Agent → git | `tools/exec.py:_git` (sandboxed) and `workspace/worktree.py:git` (not sandboxed, full env) | Commit, diff, status, worktree administration | Trusted tooling | Capability `EXEC_GIT`; `git` is on the allow-list; ambient git configuration and hooks are disabled by `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null` and an empty `GIT_CONFIG_COUNT` | **Not a boundary in the development profile.** `git` runs repository-controlled configuration and hooks. Under the hardened profile the repository's git metadata directory is bound into the containment boundary and the system is read-only, so a hook cannot write outside it — but a hook can still *run*. |
 | B5 | Agent → filesystem outside the worktree | `tools/base.py:ToolContext.resolve`, `security/policy.py:PolicyEngine._check_path` | Read/write/delete paths | Confined by design | `resolve()` refuses paths whose resolved form escapes `scope_root`; `tools/fs.py:ReadFileTool.invoke` refuses to read through an escaping symlink; `_check_path` applies the task's `exclude_paths` and the configured `protected_paths` | **Enforced for the fs tools only.** `run_command` is unconfined. `ToolContext.scope_patterns` is now read — `agents/base.py:AgentLoop._invoke_tool` passes it to `authorize(scope_patterns=...)` — but it reaches only the path-scoped fs tools. |
-| B6 | Agent → network | `sandbox/limits.py:Sandbox.run` (`_probe_unshare`) | Outbound sockets | Restricted by default | `SandboxConfig.allow_network = False`; `unshare --net` probe; `no_proxy=*` | **Conditional.** On a host where `unshare --net` is not permitted the command runs with full egress; the `isolation_note` records this in `ToolResult.data` (`tools/exec.py:RunCommandTool.invoke`), but it is not written to the event log and is not shown to the model. |
+| B6 | Agent → network | `sandbox/limits.py:Sandbox.run` (`_probe_unshare`), `sandbox/containment.py` | Outbound sockets | Restricted by default | `SandboxConfig.allow_network = False`; under the hardened profile a bubblewrap network namespace; under the development profile an `unshare --net` probe; `no_proxy=*` | **Conditional, and the condition is recorded.** On a host where neither the containment backend nor `unshare --net` is available, the command runs with full egress; the `isolation_note` records this in `ToolResult.data` (`tools/exec.py:RunCommandTool.invoke`). The hardened profile refuses such a host rather than running with full egress under a promise it cannot keep. |
 | B7 | Agent → inter-agent messages | `models/message.py:Message._validate_payload`, `agents/messaging.py:MessageBus._validate` | Typed payloads | Untrusted | Discriminated-union payload validation; unknown sender/recipient rejection; duplicate id and stale version rejection | **Enforced in-process.** The duplicate-id and version tables are in-memory and do not survive a restart. |
 | B8 | Approval authority → runtime | `security/policy.py:PolicyEngine.authorize(approved=...)`, `agents/approval.py:ApprovalBroker.request`, `store/state.py:StateStore.decide_approval` | A boolean | Trusted human | `ApprovalConfig` toggles; `approvals` table with `pending`/`approved`/`denied` | **Wired, narrowly.** `authorize` is called from `agents/base.py:AgentLoop._invoke_tool` and a `REQUIRE_APPROVAL` decision is routed to `ApprovalBroker.request`, which creates the approval row and polls for a decision. The reachable action is `run_command` with `git push` or `git commit`; the approval is still an unbound boolean, not bound to a specific action or argument set. |
 | B9 | Orchestrator → store | `store/db.py:Database.transaction` | SQL, event payloads | Trusted component | Single SQLite connection, `BEGIN IMMEDIATE`, process-wide `threading.RLock` | **Active.** One writer at a time. |

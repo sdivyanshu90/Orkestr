@@ -38,6 +38,8 @@ class EventType(str, Enum):
     RUN_COMPLETED = "run.completed"
     RUN_CANCELLED = "run.cancelled"
     RUN_FAILED = "run.failed"
+    RUN_RECONCILED = "run.reconciled"
+    """A previous owner's abandoned resources were reclaimed at startup."""
     STRATEGY_SELECTED = "run.strategy_selected"
     PLAN_CREATED = "run.plan_created"
     PLAN_REVISED = "run.plan_revised"

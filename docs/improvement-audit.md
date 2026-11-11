@@ -21,6 +21,44 @@ historical evidence and should not be read as the current delivery order.
 
 ## 1. The summary table
 
+```mermaid
+flowchart LR
+    subgraph closed["Closed"]
+        C1["2.1 latency-bearing provider"]
+        C2["2.2 adversarial fixtures"]
+        C3["3.1 calibrated strategy selector"]
+        C4["3.2 replanning during execution"]
+        C5["4.5 static type checking"]
+    end
+    subgraph open["Still open"]
+        O1["4.1 unbounded event log"]
+        O2["4.2 non-durable message validation"]
+        O3["4.3 full suite re-run per task"]
+        O4["4.4 dependency integrity"]
+    end
+    subgraph low["Low severity"]
+        L1["5.1 O(V+E) ready scan"]
+        L2["5.2 O(V²·F) overlap detection"]
+        L3["5.3 bounded delegation not implemented"]
+        L4["5.4 no counterfactual branching"]
+        L5["5.5 derived dashboard timeline"]
+    end
+    REV["§7 scoring policy<br/>independent review required"]
+    EXT{{"Not reachable in-session<br/>U1 · U2 · S3 · V4"}}
+
+    REV -.->|unblocks| closed
+    REV -.->|still fails| open
+    REV -.-> EXT
+
+    classDef ok fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
+    classDef warn fill:#3b2f1f,stroke:#e0b56c,color:#f5f5f5
+    classDef out fill:#2b1f2b,stroke:#a37ce0,color:#f5f5f5
+    class C1,C2,C3,C4,C5 ok
+    class O1,O2,O3,O4 warn
+    class L1,L2,L3,L4,L5 warn
+    class EXT out
+```
+
 | # | Gap | Severity | Blocks the research question? |
 |---|---|---|---|
 | 1 | Adversarial task fixtures | **Critical** | Yes — the completion-rate half |

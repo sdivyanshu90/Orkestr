@@ -38,6 +38,33 @@ Sources: [workflow results](local-benchmark-results.md),
 
 ## Release order and decision gates
 
+```mermaid
+flowchart TB
+    R0["R0 · Make success trustworthy<br/>immutable contract · final-tree boundary<br/>pre-satisfied detection"]
+    R1["R1 · Bound execution and resources<br/>absolute deadline · owned PIDs<br/>request accounting"]
+    R2["R2 · Contain untrusted work<br/>bound approvals · isolation profiles<br/>protected material"]
+    R3["R3 · Establish credible evidence<br/>environment fingerprint<br/>evaluation statistics"]
+    R4["R4 · Make coordination earn its overhead<br/>bounded replanning"]
+    R5["R5 · Ship an operable release<br/>type checking · lockfile · CI"]
+    AUDIT["Policy assessment<br/>§5 record, 20 binary criteria"]
+    EXT{{"Out of reach in-session"}}
+
+    R0 --> R1 --> R2 --> R3 --> R4 --> R5 --> AUDIT
+    AUDIT -.->|requires an independent reviewer| EXT
+
+    classDef done fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
+    classDef todo fill:#3b2f1f,stroke:#e0b56c,color:#f5f5f5
+    classDef out fill:#2b1f2b,stroke:#a37ce0,color:#f5f5f5
+    class R0,R1,R2,R3,R4 done
+    class R5,AUDIT todo
+    class EXT out
+```
+
+Each stage has an **evidence gate**, not a feature list: a stage is
+finished when its exit condition can be reproduced from a clean checkout,
+not when its code exists. The stage definitions below state the exit
+condition for each one in the same terms.
+
 | Stage | Outcome | Depends on | Required evidence to exit |
 |---|---|---|---|
 | R0 | Success means the original request passed independent checks | None | Adversarial false-success suite, protected request contract, verified final tree |

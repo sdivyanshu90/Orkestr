@@ -28,12 +28,20 @@ import contextlib
 import os
 import resource
 import shutil
+import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import SandboxConfig
 from ..errors import ToolError
+from ..runtime.registry import ResourceKind, ResourceRegistry
+
+#: One registry instance per path per process.  The sandbox is constructed
+#: ad hoc (the tool path builds a fresh one for every command), so a
+#: process-wide cache is what keeps concurrent commands from clobbering
+#: each other's registrations in the durable file.
+_REGISTRIES: dict[str, ResourceRegistry] = {}
 
 
 @dataclass
@@ -299,6 +307,8 @@ class Sandbox:
         except (OSError, ValueError) as exc:
             raise ToolError(f"failed to start command: {exc}", command=list(argv)) from exc
 
+        self._register(proc, argv)
+
         timed_out = False
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
@@ -308,13 +318,20 @@ class Sandbox:
         except TimeoutError:
             timed_out = True
             stdout_b, stderr_b = b"", b""
-            try:
-                os.killpg(proc.pid, 9)
-            except (ProcessLookupError, PermissionError, OSError):
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
+            self._kill_group(proc)
             with contextlib.suppress(TimeoutError, ValueError):
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=5)
+        except asyncio.CancelledError:
+            # The task was cancelled.  The child is in its own process
+            # group (the preexec function calls setsid), so the group is
+            # signalled here; without this the command would outlive the
+            # cancellation and become an orphan the run no longer owns.
+            self._kill_group(proc)
+            with contextlib.suppress(TimeoutError, ValueError, asyncio.CancelledError):
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=5)
+            raise
+
+        self._unregister(proc)
 
         duration = time.monotonic() - started
         stdout_text, stdout_truncated = self._cap(stdout_b)
@@ -360,6 +377,62 @@ class Sandbox:
             f"executed inside the {self._containment} containment backend "
             "(read-only system, private home, isolated network and PID namespace)"
         )
+
+    def _kill_group(self, proc: asyncio.subprocess.Process) -> None:
+        """Kill the command's process group.
+
+        The preexec function calls ``setsid``, so the command leads its
+        own session and process group: signalling the group reaches every
+        descendant, not just the process the runtime spawned.
+        """
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+
+    def _register(self, proc: asyncio.subprocess.Process, command: tuple[str, ...]) -> None:
+        """Record the command in the run's resource registry.
+
+        A run that is killed cannot clean up after itself, so the process
+        is written to the registry *while it is alive*.  The next run
+        reads the registry and reclaims what the dead owner left.
+        """
+        registry = self._registry()
+        if registry is None:
+            return
+        try:
+            registry.register_process(
+                kind=ResourceKind.CHILD_PROCESS,
+                identifier=f"cmd:{proc.pid}:{' '.join(command)[:80]}",
+                pid=proc.pid,
+                pgid=proc.pid,
+            )
+        except Exception:  # pragma: no cover - never break a command
+            # Registering is best-effort: the command must run even if the
+            # durable registry cannot be written.
+            return
+
+    def _unregister(self, proc: asyncio.subprocess.Process) -> None:
+        registry = self._registry()
+        if registry is None:
+            return
+        try:
+            registry.release(pid=proc.pid)
+        except Exception:  # pragma: no cover - defensive
+            # Releasing is best-effort: a stale entry only causes the next
+            # reconciliation to look for a process that has already gone.
+            return
+
+    def _registry(self) -> ResourceRegistry | None:
+        path = (self.config.registry_path or "").strip()
+        if not path:
+            return None
+        registry = _REGISTRIES.get(path)
+        if registry is None:
+            registry = ResourceRegistry.load(path)
+            _REGISTRIES[path] = registry
+        return registry
 
     async def _probe_unshare(self, cwd: Path, env: dict[str, str]) -> bool | None:
         """Check whether ``unshare --net`` works on this host."""

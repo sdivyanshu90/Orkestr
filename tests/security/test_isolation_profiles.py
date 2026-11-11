@@ -103,12 +103,24 @@ def test_the_sandbox_environment_disables_ambient_git() -> None:
 
 
 def test_a_run_refuses_to_start_under_an_unsatisfiable_profile(
-    tmp_path: Path, repo: Path
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The refusal happens before any work, not in the middle of it."""
+    """The refusal happens before any work, not in the middle of it.
+
+    The unsatisfiable condition is *injected* rather than hoped for from
+    the host: a test that quietly skips whenever the machine is capable
+    is a test that never runs where it matters.  With no containment
+    backend the hardened profile cannot keep its promise, so the run must
+    refuse and no task may exist afterwards.
+    """
     import asyncio
 
+    import agent_squad.sandbox.containment as containment
     from agent_squad.orchestrator import Orchestrator
+    from agent_squad.store.db import Database
+    from agent_squad.store.state import StateStore
+
+    monkeypatch.setattr(containment, "find_backend", lambda: None)
 
     config = RunConfig(
         run_id="run_isolation",
@@ -119,9 +131,6 @@ def test_a_run_refuses_to_start_under_an_unsatisfiable_profile(
     )
     orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
     try:
-        report = IsolationGuard(HARDENED_PROFILE, config.sandbox).inspect()
-        if report.satisfied:
-            pytest.skip("this host can satisfy the hardened profile")
         with pytest.raises(InfrastructureError):
             asyncio.run(
                 orchestrator.run(
@@ -149,6 +158,48 @@ def test_a_run_refuses_to_start_under_an_unsatisfiable_profile(
                     },
                 )
             )
+    finally:
+        asyncio.run(orchestrator.aclose())
+
+    db = Database(tmp_path / "data" / "runs" / "run_isolation" / "state.db")
+    try:
+        assert StateStore(db).list_task_states("run_isolation") == []
+    finally:
+        db.close()
+
+
+def test_the_effective_config_satisfies_the_hardened_profile(
+    tmp_path: Path, repo: Path
+) -> None:
+    """What the orchestrator actually runs with must satisfy the profile.
+
+    This is the complement of the refusal test: the orchestrator creates
+    the private home and selects the containment backend *before* the
+    guard runs, so the guard must judge the effective configuration, not
+    the operator's raw one.
+    """
+    import asyncio
+
+    from agent_squad.orchestrator import Orchestrator
+    from agent_squad.security.profiles import IsolationGuard, get_profile
+
+    config = RunConfig(
+        run_id="run_effective",
+        repo_path=str(repo),
+        data_dir=str(tmp_path / "data"),
+        provider={"name": "mock", "model": "mock-deterministic-v1"},
+        isolation_profile="hardened",
+    )
+    orchestrator = Orchestrator(config, data_dir=tmp_path / "data")
+    try:
+        report = IsolationGuard(
+            get_profile("hardened"),
+            orchestrator.config.sandbox,
+            workspace=orchestrator.paths.worktrees,
+            private_home=orchestrator.private_home,
+        ).inspect()
+        assert report.satisfied, report.to_dict()
+        assert not report.missing()
     finally:
         asyncio.run(orchestrator.aclose())
 

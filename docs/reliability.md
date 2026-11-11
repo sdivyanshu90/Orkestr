@@ -496,6 +496,59 @@ operation the CLI invokes:
 
 ## 7. Timeout and cancellation propagation
 
+### 7.0 The shape of the propagation
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OD as Orchestrator
+    participant DL as RunDeadline
+    participant SC as Scheduler
+    participant WK as Worker
+    participant SB as Sandbox
+    participant VG as Verifier
+
+    OD->>DL: start() with the declared budget D
+    Note over DL: reserve is held back for teardown
+
+    SC->>DL: remaining()
+    DL-->>SC: D - reserve - elapsed
+    SC->>SC: clamp the attempt timeout to remaining
+
+    alt remaining is zero
+        SC-->>OD: DeadlineExceeded before any new attempt
+        Note over SC: no new work is created after expiry
+    else remaining is positive
+        SC->>WK: run the task
+        WK->>SB: execute a command
+        SB->>SB: wait_for(communicate, timeout)
+        alt the command overruns
+            SB->>SB: killpg(SIGKILL) then reap
+            SB-->>WK: timed_out
+        else the command completes
+            SB-->>WK: exit code and output
+        end
+        WK-->>SC: the task outcome
+        SC->>VG: verify the task
+        VG->>DL: check("verification")
+        VG-->>OD: the verdict
+    end
+
+    OD->>OD: teardown within the reserve
+```
+
+Two properties of this shape are worth stating explicitly, because they
+are where a run's bound usually leaks:
+
+* **The clamp is applied before the attempt starts, not after it
+  overruns.** A per-request timeout that is not clamped to the remaining
+  budget can each be individually satisfied while the run as a whole
+  exceeds its deadline by the number of requests times the timeout.
+* **The reserve is not available to work.** The last few seconds of the
+  budget belong to teardown, because a run that is killed mid-teardown
+  leaves the resources it owns behind, and an orphaned process is worse
+  than a run that stopped slightly early.
+
 ### 7.1 Timeouts
 
 | Deadline | Value | Enforcement | Code |

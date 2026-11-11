@@ -161,6 +161,24 @@ class ResourceRegistry:
     def pending(self) -> list[OwnedResource]:
         return [r for r in self._resources.values() if not r.reclaimed]
 
+    def release(self, *, pid: int | None = None, identifier: str | None = None) -> None:
+        """Forget a resource the run has finished with.
+
+        A process that exited normally is no longer owned, and leaving it
+        in the registry would make the next run's reconciliation report a
+        survivor that does not exist.
+        """
+        removed = False
+        for key, resource in list(self._resources.items()):
+            matches = (identifier is not None and resource.identifier == identifier) or (
+                pid is not None and resource.pid == pid
+            )
+            if matches:
+                removed = True
+                del self._resources[key]
+        if removed:
+            self.flush()
+
     def flush(self) -> None:
         """Persist the registry so it survives the process that wrote it."""
         try:

@@ -17,8 +17,10 @@ verification gate decides what that means.
 from __future__ import annotations
 
 import contextlib
+import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -543,10 +545,20 @@ class WorkerRunner:
         return None
 
     def cleanup_worktree(self, worktree_path: str | Path, *, keep: bool = False) -> None:
-        """Remove a worktree by path (used by the scheduler after verification)."""
-        if keep:
-            return
+        """Reclaim a task's worktree.
+
+        The scheduler asks for a worktree to be kept when a task failed,
+        which is a debugging convenience.  The retention policy is
+        stricter: a workspace survives only when the *owner* opted in --
+        ``workspace.keep_worktrees_on_failure`` or
+        ``keep_worktrees_on_success`` -- and when it does survive it is
+        recorded in the run's durable manifest.  A workspace that is
+        neither opted in nor recorded is indistinguishable from a leak.
+        """
         path = Path(worktree_path)
+        if keep and self._retention_opted_in():
+            self._record_retained_workspace(path)
+            return
         git(
             ["worktree", "remove", "--force", "--", str(path)],
             cwd=self.worktrees.repo_path,
@@ -557,6 +569,45 @@ class WorkerRunner:
 
             shutil.rmtree(path, ignore_errors=True)
         git(["worktree", "prune"], cwd=self.worktrees.repo_path, check=False)
+
+    def _retention_opted_in(self) -> bool:
+        workspace = self.config.workspace
+        return bool(
+            workspace.keep_worktrees_on_failure or workspace.keep_worktrees_on_success
+        )
+
+    def _record_retained_workspace(self, path: Path) -> None:
+        """Record a retained workspace in the run's durable manifest.
+
+        The manifest is what makes retention legitimate: an operator can
+        find every workspace the run left behind, see why it was left and
+        when, and remove it.
+        """
+        manifest_path = self.artifacts.root.parent / "retained-workspaces.json"
+        try:
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except (OSError, json.JSONDecodeError):
+            existing = []
+        try:
+            stat = path.stat()
+            size = stat.st_size
+        except OSError:
+            size = 0
+        existing.append(
+            {
+                "path": str(path),
+                "retained_at": datetime.now(UTC).isoformat(),
+                "bytes": size,
+                "reason": "the task did not succeed and retention was enabled",
+                "operator_action": "inspect and delete when no longer needed",
+            }
+        )
+        with contextlib.suppress(OSError):
+            manifest_path.write_text(
+                json.dumps(existing, indent=2), encoding="utf-8"
+            )
 
     # ---------------------------------------------------------------- hooks
 

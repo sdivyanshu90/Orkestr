@@ -655,6 +655,122 @@ flowchart LR
 
 ---
 
+## 6.2 Execution containment
+
+The sandbox's resource limits (`RLIMIT_*`, a wall-clock timeout, an
+executable allow-list) raise the cost of a mistake but they are **not** a
+security boundary: a process with `python3` on the allow-list can read
+anything the host user can read.  The hardened isolation profile adds a
+real containment boundary on top, and the boundary is *demonstrated*
+rather than claimed.
+
+```mermaid
+flowchart TB
+    subgraph host["Host filesystem"]
+        SYSTEM["/usr /etc /opt<br/>(read-only bind)"]
+        WS["task worktree<br/>(read-write bind)"]
+        PH["private HOME<br/>mode 0700, per run"]
+        USERHOME["invoking user's HOME<br/>(not bound at all)"]
+        GIT[".git metadata<br/>(read-write bind)"]
+    end
+
+    subgraph bwrap["bubblewrap user namespace"]
+        NS_NET["network namespace<br/>loopback only"]
+        NS_PID["PID namespace<br/>--die-with-parent"]
+        NS_MNT["mount namespace"]
+        TMP["tmpfs /tmp"]
+        PROC["fresh /proc"]
+        CMD["worker command"]
+    end
+
+    subgraph probe["Capability probe (executes inside the boundary)"]
+        P1["HOME is the private home"]
+        P2["host canary is unreadable"]
+        P3["denied endpoint is unreachable"]
+        P4["system image is read-only"]
+        P5["workspace is writable"]
+    end
+
+    SYSTEM --> NS_MNT
+    WS --> NS_MNT
+    PH --> NS_MNT
+    GIT --> NS_MNT
+    NS_MNT --> TMP
+    NS_MNT --> PROC
+    NS_MNT --> CMD
+    NS_NET --- CMD
+    NS_PID --- CMD
+    USERHOME -.->|never visible| CMD
+    CMD --> P1 & P2 & P3 & P4 & P5
+    P1 & P2 & P3 & P4 & P5 -->|all five must hold| VERDICT{{"profile honoured"}}
+
+    classDef ro fill:#1f2b3b,stroke:#6c9ce0,color:#f5f5f5
+    classDef rw fill:#16301f,stroke:#6cbe6c,color:#f5f5f5
+    classDef hidden fill:#3b1f1f,stroke:#e06c6c,color:#f5f5f5
+    class SYSTEM ro
+    class WS,PH,GIT rw
+    class USERHOME hidden
+```
+
+Three properties make this more than configuration:
+
+1. **The boundary is probed by execution.**  The probe runs a real command
+   *inside* the boundary and reads back what the command observed.  A host
+   where `bwrap` is installed but blocked by the kernel fails the probe,
+   and the hardened run refuses before any work.
+2. **The refusing host is a first-class outcome.**  `IsolationGuard.check`
+   and the probe both fail closed: the run is refused rather than degraded
+   silently, because a hardened profile that quietly runs unhardened is
+   worse than no profile.
+3. **The development profile says what it does not do.**  It inherits the
+   user's `HOME` only if no private home was provisioned, and it records
+   `isolation_note` with the result — including the sentence "outbound
+   access was NOT prevented" when that is the truth.
+
+## 6.3 Run ownership and teardown
+
+A run owns processes, worktrees and a private home.  Losing track of any
+of them is a leak, and a leak that survives the run is a resource the next
+run inherits.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OP as Operator / CLI
+    participant OR as Orchestrator
+    participant RG as ResourceRegistry
+    participant SB as Sandbox
+    participant FS as Workspace root
+
+    OP->>OR: run()
+    OR->>OR: acquire durable ownership (fence++)
+    OR->>RG: reconcile(previous owner's registry)
+    Note over RG: a SIGKILLed owner left PIDs<br/>reclaimed here, before any work starts
+    OR->>OR: install SIGINT/SIGTERM handlers
+    OR->>SB: execute command
+    SB->>RG: register_process(pid, pgid) while alive
+    alt command completes
+        SB->>RG: release(pid)
+    else timeout or cancellation
+        SB->>SB: killpg(SIGKILL) on the group
+        SB->>RG: release(pid)
+    end
+    OR->>FS: sweep workspaces not in the retention manifest
+    OR->>OR: release ownership
+    OP-->>OR: aclose()
+    OR->>RG: cleanup(grace_s=5)
+    OR->>FS: remove the private home
+```
+
+The registry is written **while the process is alive**, which is the only
+moment a SIGKILLed owner can still leave a usable record.  The teardown
+then does three things in order: reclaim owned processes (terminate, wait
+the grace period, escalate to `SIGKILL`, report survivors), sweep
+workspaces not recorded in the retention manifest, and delete the private
+home.
+
+---
+
 ## 7. Module map
 
 | Module path | Responsibility | Key public types |
