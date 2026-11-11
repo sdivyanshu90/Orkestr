@@ -247,11 +247,15 @@ class StateStore:
                 except Exception:
                     continue
                 specs[spec.id] = spec
-                states[spec.id] = TaskState(
-                    id=spec.id,
-                    run_id=spec.run_id,
-                    max_attempts=spec.budget.max_attempts,
-                )
+                if spec.id not in states:
+                    # A task may be re-registered (a replan re-states it).
+                    # The *first* registration defines the task; a later one
+                    # must not reset the state the run has accumulated.
+                    states[spec.id] = TaskState(
+                        id=spec.id,
+                        run_id=spec.run_id,
+                        max_attempts=spec.budget.max_attempts,
+                    )
                 replayed += 1
             elif event.type is EventType.TASK_STATUS_CHANGED and event.task_id:
                 state = states.get(event.task_id)

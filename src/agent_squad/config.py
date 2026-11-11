@@ -138,6 +138,16 @@ class SchedulerConfig(_Base):
     poll_interval_s: float = Field(default=0.05, gt=0)
     max_delegation_depth: int = Field(default=2, ge=0, le=5)
     stall_detection_s: float = Field(default=300.0, gt=0)
+    max_replans: int = Field(
+        default=1,
+        ge=0,
+        le=10,
+        description=(
+            "How many times a run may revise its plan after a classified "
+            "verification failure.  Zero disables replanning; the bound stops "
+            "a plan that keeps changing from churning."
+        ),
+    )
 
 
 class StrategyConfig(_Base):

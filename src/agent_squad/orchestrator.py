@@ -42,6 +42,11 @@ from .observe.tracing import Tracer
 from .planning.contract import build_contract
 from .planning.inspector import RepositoryInspector
 from .planning.planner import PlanRequest, PlanResult, build_planner
+from .planning.replan import (
+    RevisionContext,
+    check_revision,
+    merge_revisions,
+)
 from .providers.base import ModelProvider
 from .providers.budget import BudgetManager
 from .providers.registry import ProviderRouter, build_providers
@@ -196,6 +201,7 @@ class Orchestrator:
         self._role_providers: dict[str, ModelProvider] = {}
         self._record_exchanges = record_exchanges
         self.recorder: Any = None
+        self._plan_version = 1
         self.protected_paths: tuple[str, ...] = tuple(
             config.protected_material_paths or ()
         )
@@ -413,40 +419,43 @@ class Orchestrator:
         )
 
         # ---- schedule ----------------------------------------------------
-        runner = WorkerRunner(
-            config=self.config,
-            state=self.state,
-            log=self.log,
-            artifacts=self.artifacts,
-            worktrees=self.worktrees,
-            bus=self.bus,
-            provider=self.provider,
-            provider_resolver=self.provider_for,
-            supervisor=SUPERVISOR,
-            policy=self.policy,
-            approver=self.approver.request,
-            budget=self.budget,
-            tracer=self.tracer,
-        )
-        scheduler = Scheduler(
-            config=self.config,
-            graph=graph,
-            state=self.state,
-            log=self.log,
+        runner = self._build_runner()
+        scheduler = self._build_scheduler(
+            graph,
+            plan,
             runner=runner,
-            gate=self.gate,
-            briefs=plan.briefs,
-            bus=self.bus,
             max_workers=max_workers,
-            idempotency_prefix=self.config.run_id,
             base_revision=base_revision,
             cancellation=cancellation,
-            tracer=self.tracer,
-            logger=self.logger,
             deadline=deadline,
         )
         summary = await scheduler.run()
         outcomes = dict(scheduler.outcomes)
+
+        # ---- bounded replanning -------------------------------------------
+        plan, summary, outcomes = await self._maybe_replan(
+            plan=plan,
+            graph=graph,
+            summary=summary,
+            outcomes=outcomes,
+            contract=contract,
+            objective=objective,
+            description=description,
+            request_spec=request_spec,
+            deadline=deadline,
+            max_workers=max_workers,
+            base_revision=base_revision,
+            cancellation=cancellation,
+        )
+        graph = plan.graph()
+        # Only genuinely new tasks are registered.  Re-registering an
+        # existing task would emit a second TASK_CREATED event, which would
+        # reset the task's state when the projection is rebuilt.
+        known = {s.id for s in self.state.list_task_states(self.config.run_id)}
+        for task in plan.tasks:
+            if task.id not in known:
+                self.state.upsert_task(task)
+
         for state in self.state.list_task_states(self.config.run_id):
             if state.id in outcomes:
                 # Keep the scheduler's richer outcome but refresh the counters
@@ -583,6 +592,214 @@ class Orchestrator:
             not_satisfied=len(verdict.not_satisfied),
         )
         return verdict
+
+    def _build_runner(self) -> WorkerRunner:
+        """Build the worker runner.
+
+        A replanned run uses the same runner construction as the original,
+        so the revision is not executed under different conditions.
+        """
+        return WorkerRunner(
+            config=self.config,
+            state=self.state,
+            log=self.log,
+            artifacts=self.artifacts,
+            worktrees=self.worktrees,
+            bus=self.bus,
+            provider=self.provider,
+            provider_resolver=self.provider_for,
+            supervisor=SUPERVISOR,
+            policy=self.policy,
+            approver=self.approver.request,
+            budget=self.budget,
+            tracer=self.tracer,
+        )
+
+    def _build_scheduler(
+        self,
+        graph: TaskGraph,
+        plan: PlanResult,
+        *,
+        runner: WorkerRunner,
+        max_workers: int,
+        base_revision: str | None,
+        cancellation: Any,
+        deadline: Any,
+    ) -> Scheduler:
+        """Build a scheduler for a plan.
+
+        The initial run and a replanned run go through the same construction,
+        so a revision is not executed under different conditions than the
+        plan it replaced.
+        """
+        return Scheduler(
+            config=self.config,
+            graph=graph,
+            state=self.state,
+            log=self.log,
+            runner=runner,
+            gate=self.gate,
+            briefs=plan.briefs,
+            bus=self.bus,
+            max_workers=max_workers,
+            idempotency_prefix=self.config.run_id,
+            base_revision=base_revision,
+            cancellation=cancellation,
+            tracer=self.tracer,
+            logger=self.logger,
+            deadline=deadline,
+        )
+
+    async def _maybe_replan(
+        self,
+        *,
+        plan: PlanResult,
+        graph: TaskGraph,
+        summary: RunSummary,
+        outcomes: dict[str, TaskOutcome],
+        contract: RequestContract,
+        objective: str,
+        description: str,
+        request_spec: dict[str, Any] | None,
+        deadline: Any,
+        max_workers: int,
+        base_revision: str | None,
+        cancellation: Any,
+    ) -> tuple[PlanResult, RunSummary, dict[str, TaskOutcome]]:
+        """Revise the plan once, if a classified failure justifies it.
+
+        Replanning is only attempted for a *verification* failure — the
+        kind that says "the work did not meet the requirement" — and only
+        while the budget allows.  A model or infrastructure failure is a
+        different problem, and revising the plan would not address it.
+        """
+        max_replans = self.config.scheduler.max_replans
+        if max_replans <= 0:
+            return plan, summary, outcomes
+
+        failed = [
+            task_id
+            for task_id, outcome in outcomes.items()
+            if outcome.status is TaskStatus.FAILED
+            and outcome.error_class == "verification"
+        ]
+        if not failed:
+            return plan, summary, outcomes
+
+        task_id = sorted(failed)[0]
+        outcome = outcomes[task_id]
+        verified = {
+            t.id: t for t in plan.tasks if outcomes.get(t.id) and outcomes[t.id].status is TaskStatus.SUCCEEDED
+        }
+
+        context = RevisionContext(
+            objective=objective,
+            description=description,
+            failed_task_id=task_id,
+            failure_reason=outcome.error or "the acceptance criteria were not met",
+            failed_criteria=tuple(
+                outcome.verification.failed if outcome.verification else ()
+            ),
+            completed_task_ids=tuple(sorted(verified)),
+            current_plan=tuple(t.model_dump(mode="json") for t in plan.tasks),
+        )
+
+        try:
+            revised_plan = await self._request_revision(context, contract)
+        except Exception as exc:
+            self.logger.info(
+                "replanning was refused", task_id=task_id, error=str(exc)[:200]
+            )
+            return plan, summary, outcomes
+
+        changed = check_revision(
+            previous=tuple(plan.tasks),
+            revised=tuple(revised_plan.tasks),
+            contract=contract,
+            completed_task_ids=tuple(sorted(verified)),
+        )
+        merged = merge_revisions(
+            previous=tuple(plan.tasks),
+            revised=tuple(revised_plan.tasks),
+            completed=verified,
+        )
+        revised_plan = revised_plan.model_copy(
+            update={
+                "tasks": list(merged),
+                "briefs": {
+                    **revised_plan.briefs,
+                    **{
+                        t.id: brief
+                        for t, brief in zip(merged, plan.briefs.values(), strict=False)
+                        if t.id not in revised_plan.briefs
+                    },
+                },
+            }
+        )
+
+        version = self._plan_version + 1
+        self._plan_version = version
+        self.log.append(
+            EventType.PLAN_REVISED,
+            run_id=self.config.run_id,
+            task_id=task_id,
+            payload={
+                "version": version,
+                "reason": context.failure_reason,
+                "failed_criteria": list(context.failed_criteria),
+                "changed_task_ids": list(changed),
+                "preserved_task_ids": list(sorted(verified)),
+            },
+        )
+        self.logger.info(
+            "plan revised",
+            version=version,
+            changed=list(changed),
+            preserved=list(sorted(verified)),
+        )
+
+        # Run the revised plan.  The verified work is not repeated.
+        revised_graph = revised_plan.graph()
+        runner = self._build_runner()
+        scheduler = self._build_scheduler(
+            revised_graph,
+            revised_plan,
+            runner=runner,
+            max_workers=max_workers,
+            base_revision=base_revision,
+            cancellation=cancellation,
+            deadline=deadline,
+        )
+        new_summary = await scheduler.run()
+        new_outcomes = dict(scheduler.outcomes)
+        for state in self.state.list_task_states(self.config.run_id):
+            if state.id in new_outcomes:
+                new_outcomes[state.id].tokens_used = state.tokens_used
+                new_outcomes[state.id].cost_usd = state.cost_used_usd
+                new_outcomes[state.id].attempts = state.attempt
+        return revised_plan, new_summary, new_outcomes
+
+    async def _request_revision(
+        self, context: RevisionContext, contract: RequestContract
+    ) -> PlanResult:
+        """Ask the planner for a revised plan."""
+        from ..planning.planner import PlanRequest
+
+        planner = build_planner(self.config, self.provider)
+        request = PlanRequest(
+            run_id=self.config.run_id,
+            objective=context.objective,
+            description=(
+                f"{context.description}\n\nThe previous attempt failed.\n"
+                f"{context.to_prompt()}"
+            ),
+            repo_path=self.config.repo_path,
+            base_revision=(
+                self.worktrees.head_revision() if self.worktrees.has_commits() else None
+            ),
+            contract=contract,
+        )
+        return await planner.plan(request)
 
     async def _integrate(
         self,
