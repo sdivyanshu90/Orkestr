@@ -674,10 +674,10 @@ async def test_uncooperative_work_cannot_extend_the_acknowledgement_window(
     with pytest.raises(DeadlineExceeded):
         await run_phase(stubborn, phase=Phase.WORKER.value, deadline=deadline)
     elapsed = time.monotonic() - started
-    # Let the abandoned task finish before the test ends, so it does not
-    # leak into the next one.
-    await asyncio.sleep(0.45)
-
+    # The abandoned task's eventual result is consumed by the done callback
+    # inside ``run_phase``; sleeping here would make the test's own task
+    # cancellable during teardown, which is a race in the test, not in the
+    # runtime.
     assert elapsed < 1.5, "the acknowledgement window did not bound the wait"
 
 

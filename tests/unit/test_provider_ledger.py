@@ -316,10 +316,13 @@ async def test_the_router_measures_the_concurrency_slot_wait() -> None:
         ledger=ledger,
     )
 
-    await asyncio.gather(
-        router.complete(make_request(phase="worker")),
-        router.complete(make_request(phase="worker")),
-    )
+    # Start the second request only once the first holds the only slot, so
+    # the queue measurement is deterministic rather than dependent on how
+    # the event loop happens to schedule two coroutines.
+    first = asyncio.create_task(router.complete(make_request(phase="worker")))
+    await asyncio.sleep(0.01)
+    second = asyncio.create_task(router.complete(make_request(phase="worker")))
+    await asyncio.gather(first, second)
 
     queues = [record.queue_s for record in ledger.records]
     assert len(queues) == 2
