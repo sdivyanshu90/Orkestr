@@ -19,6 +19,7 @@ from helpers import two_independent_spec
 
 from agent_squad.config import RunConfig
 from agent_squad.models.contract import (
+    OutcomeState,
     RequestContract,
     VerificationOutcome,
 )

@@ -196,7 +196,6 @@ async def _execute_replay(
         result.warnings.append("no model exchanges were recorded; nothing to replay")
         return None
 
-    recorded_status = [t.get("to") for t in recorded if t.get("task_id")]
     provider = RecordedProvider(exchanges)
     # The replay must not write into the original run's state: the tasks
     # there are already finished, and re-running them would be an illegal
